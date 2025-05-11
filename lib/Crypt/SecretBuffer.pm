@@ -1,6 +1,6 @@
 package Crypt::SecretBuffer;
 # VERSION
-# ABSTRACT: Prevent accidental copies of a string of sensitive data
+# ABSTRACT: Prevent accidentally copying a string of sensitive data
 
 =head1 SYNOPSIS
 
@@ -79,8 +79,10 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util ();
+use overload '""' => \&stringify;
 
 require XSLoader;
+sub dl_load_flags {0x01}
 XSLoader::load('Crypt::SecretBuffer', $Crypt::SecretBuffer::VERSION);
 
 {
@@ -96,6 +98,16 @@ XSLoader::load('Crypt::SecretBuffer', $Crypt::SecretBuffer::VERSION);
 sub import {
    splice(@_, 0, 1, 'Crypt::SecretBuffer::Exports');
    goto \&Crypt::SecretBuffer::Exports::import;
+}
+
+sub new {
+   my $self= bless {}, shift;
+   if (@_ == 1) {
+      $self->assign($_[0]);
+   } else {
+      %$self= @_;
+   }
+   $self;
 }
 
 1;

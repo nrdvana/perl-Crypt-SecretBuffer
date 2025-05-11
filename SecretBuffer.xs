@@ -39,6 +39,12 @@ void secret_buffer_realloc(secret_buffer *buf, size_t new_capacity) {
       buf->capacity= new_capacity;
       if (buf->len > buf->capacity)
          buf->len= buf->capacity;
+      
+      /* If has been exposed as "stringify" sv, update that SV */
+      if (buf->stringify_sv) {
+         SvPVX(buf->stringify_sv)= buf->data;
+         SvCUR(buf->stringify_sv)= buf->len;
+      }
    }
 }
 
@@ -46,13 +52,14 @@ void secret_buffer_realloc(secret_buffer *buf, size_t new_capacity) {
  * capacity, not additional capacity.  If the buffer is already large enough, this does nothing.
  */
 void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity) {
-   if (buf->capacity < min_capacity)
+   if (buf->capacity < min_capacity) {
       /* round up to a multiple of 64 */
       secret_buffer_realloc(buf, (min_capacity + 63) & ~(size_t)63);
    }
 }
 
 void secret_buffer_copy(secret_buffer *dst, secret_buffer *src) {
+   warn("secret_buffer_copy");
    if (src->data && src->capacity) {
       secret_buffer_alloc_at_least(dst, src->len);
       memcpy(dst->data, src->data, src->capacity < dst->capacity? src->capacity : dst->capacity);
@@ -60,6 +67,8 @@ void secret_buffer_copy(secret_buffer *dst, secret_buffer *src) {
    } else {
       dst->len= 0;
    }
+   if (dst->stringify_sv)
+      SvCUR(dst->stringify_sv)= dst->len;
 }
 
 /* This is just exposing the wipe function of this library for general use.
@@ -75,31 +84,70 @@ void secret_buffer_wipe(char *buf, size_t len) {
 #endif
 }
 
-#endif
+/*
+ * SecretBuffer_magic_reader
+ */
 
-static int secret_buffer_magic_stringify(pTHX_ SV *sv, MAGIC *mg) {
-   HV *self= (HV*) mg->mg_obj;
-   secret_buffer *buf= (secret_buffer*) mg->mg_ptr;
-   SV **mask_sv= hv_fetch(self, "stringify_mask", 14, 0);
-
-   /* Default behavior (mask key doesn't exist): use [REDACTED] */
-   if (!mask_sv || !*mask_sv) {
-      sv_setpv(sv, "[REDACTED]");
-   }
-   /* user-supplied stringification mask */
-   else if (SvOK(*mask_sv)) {
-      sv_setsv(sv, *mask_sv);
-   }
-   /* undef mask means expose actual secret */
-   else {
-      sv_setpvn(sv, buf->data, buf->len);
-   }
+static int
+secret_buffer_stringify_magic_get(pTHX_ SV *sv, MAGIC *mg) {
+   secret_buffer *buf= (secret_buffer *)mg->mg_ptr;
+   warn("secret_buffer_stringify_magic_get %p %p", buf->stringify_sv, sv);
+   assert(buf->stringify_sv == sv);
+   SvPVX(sv)= buf->data;
+   SvCUR(sv)= buf->len;
+   SvPOK_on(sv);
+   SvUTF8_off(sv);
+   SvREADONLY_on(sv);
    return 0;
 }
 
+static int
+secret_buffer_stringify_magic_set(pTHX_ SV *sv, MAGIC *mg) {
+   warn("Attempt to assign stringify scalar");
+}
+
+static int
+secret_buffer_stringify_magic_free(pTHX_ SV *sv, MAGIC *mg) {
+   warn("Freeing stringify scalar");
+}
+
+static MGVTBL secret_buffer_stringify_magic_vtbl = {
+   secret_buffer_stringify_magic_get,
+   secret_buffer_stringify_magic_get,
+   NULL, NULL,
+   secret_buffer_stringify_magic_free,
+   NULL,
+   NULL
+#ifdef MGf_LOCAL
+   ,NULL
+#endif
+};
+
+SV* secret_buffer_create_stringify_sv(secret_buffer *buf) {
+   MAGIC *magic;
+   SV *sv;
+   warn("secret_buffer_create_stringify_sv");
+   assert(buf->stringify_sv == NULL);
+   sv= buf->stringify_sv= newSV(0);
+   magic= sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_stringify_magic_vtbl, (const char *)buf, 0);
+   SvPVX(sv)= buf->data;
+   SvCUR(sv)= buf->len;
+   SvPOK_on(sv);
+   SvUTF8_off(sv);
+   SvREADONLY_on(sv);
+   return sv;
+}
+
+/*
+ * SecretBuffer Magic
+ */
+
 static int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg) {
-   if (mg->mg_ptr) {
-      secret_buffer_realloc((secret_buffer *)mg->mg_ptr, 0);
+   secret_buffer *buf= (secret_buffer*) mg->mg_ptr;
+   if (buf) {
+      secret_buffer_realloc(buf, 0);
+      if (buf->stringify_sv)
+         sv_2mortal(buf->stringify_sv);
       Safefree(mg->mg_ptr);
       mg->mg_ptr = NULL;
    }
@@ -116,24 +164,24 @@ static int secret_bufer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
    return 0;
 }
 #else
-#define cmk_secretbuf_magic_dup NULL
+#define secret_buffer_magic_dup NULL
 #endif
 
 static MGVTBL secret_buffer_magic_vtbl = {
-   secret_buffer_magic_stringify,
-   NULL, NULL, NULL,
-   cmk_secretbuf_magic_free,
+   NULL, NULL, NULL, NULL,
+   secret_buffer_magic_free,
    NULL,
-   cmk_secretbuf_magic_dup
+   secret_buffer_magic_dup
 #ifdef MGf_LOCAL
    ,NULL
 #endif
 };
 
+
 #define SECRET_BUFFER_MAGIC_AUTOCREATE 1
 #define SECRET_BUFFER_MAGIC_OR_DIE     2
 #define SECRET_BUFFER_MAGIC_UNDEF_OK   4
-secret_buffer* secret_buffer_from_magic(SV *obj, int flags);
+secret_buffer* secret_buffer_from_magic(SV *obj, int flags) {
    SV *sv;
    MAGIC *magic;
    secret_buffer *buf;
@@ -152,7 +200,7 @@ secret_buffer* secret_buffer_from_magic(SV *obj, int flags);
 
    if (flags & SECRET_BUFFER_MAGIC_AUTOCREATE) {
       Newxz(buf, 1, secret_buffer);
-      magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_magic_vt, (const char*) buf, 0);
+      magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_magic_vtbl, (const char*) buf, 0);
 #ifdef USE_ITHREADS
       magic->mg_flags |= MGf_DUP;
 #endif
@@ -172,7 +220,7 @@ typedef secret_buffer  *maybe_secret_buffer;
 MODULE = Crypt::SecretBuffer                     PACKAGE = Crypt::SecretBuffer
 
 void
-assign(buf, source= NULL) {
+assign(buf, source= NULL)
    auto_secret_buffer buf
    SV *source;
    INIT:
@@ -181,7 +229,7 @@ assign(buf, source= NULL) {
       STRLEN len;
    PPCODE:
       /* re-initializing? throw away previous value */
-      if (buf->cap)
+      if (buf->data)
          secret_buffer_realloc(buf, 0);
       if (source) {
          if ((peer_buf= secret_buffer_from_magic(source, 0))) {
@@ -204,23 +252,23 @@ UV
 length(buf)
    auto_secret_buffer buf
    CODE:
-      RETVAL= buf->len
+      RETVAL= buf->len;
    OUTPUT:
       RETVAL
 
 int
-read_tty(buf, tty) {
+read_tty(buf, tty)
    auto_secret_buffer buf
    PerlIO *tty
    INIT:
       int tty_fd= PerlIO_fileno(tty), ch, start_len= buf->len;
       struct termios old, raw;
-   PPCODE:
+   CODE:
       if (tty_fd < 0)
          croak("Invalid file descriptor");
 
       if (tcgetattr(tty_fd, &old) != 0)
-         croak("Failed to get terminal settings: %s");
+         croak("Failed to get terminal settings");
       raw = old;
       raw.c_lflag &= ~ECHO;
       if (tcsetattr(tty_fd, TCSAFLUSH, &raw) != 0) // disable echo
@@ -235,10 +283,25 @@ read_tty(buf, tty) {
 
       tcsetattr(tty_fd, TCSAFLUSH, &old);  // restore echo
 
-      str= SvPV(tmpsv, len);
       if (buf->len > 0 && buf->data[buf->len-1] == '\r')
          buf->len--;
       RETVAL = buf->len - start_len;
    OUTPUT:
       RETVAL
 
+SV *
+stringify(buf, ...)
+   auto_secret_buffer buf
+   INIT:
+      SV **field= hv_fetch((HV*)SvRV(ST(0)), "stringify_mask", 14, 0);
+   PPCODE:
+      if (!field || !*field) {
+         ST(0)= sv_2mortal(newSVpvn("[REDACTED]", 10));
+      } else if (SvOK(*field)) {
+         ST(0)= *field;
+      } else {
+         if (!buf->stringify_sv)
+            secret_buffer_create_stringify_sv(buf);
+         ST(0)= buf->stringify_sv;
+      }
+      XSRETURN(1);

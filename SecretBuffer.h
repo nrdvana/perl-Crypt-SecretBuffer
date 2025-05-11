@@ -3,6 +3,7 @@
 typedef struct {
    char *data;
    size_t len, capacity;
+   SV *stringify_sv;
 } secret_buffer;
 
 /* Reallocate (or free) the buffer of secret_buffer, fully erasing it before deallocation.

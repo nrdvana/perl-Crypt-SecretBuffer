@@ -6,5 +6,5 @@ maybe_secret_buffer   O_SECRET_BUFFER
 
 INPUT
 O_SECRET_BUFFER
-   $var= secret_buffer_from_magic($arg, SECRET_BUFFER_MAGIC_OR_DIE @{[ $type =~ /^maybe/? "| SECRET_BUFFER_MAGIC_UNDEF_OK" : $type =~ /^auto/? "| SECRET_BUFFER_MAGIC_AUTOCREATE" | "" ]});
+   $var= secret_buffer_from_magic($arg, SECRET_BUFFER_MAGIC_OR_DIE @{[ $type =~ /^maybe/? q{| SECRET_BUFFER_MAGIC_UNDEF_OK} : $type =~ /^auto/? q{| SECRET_BUFFER_MAGIC_AUTOCREATE} : q{} ]});
 
