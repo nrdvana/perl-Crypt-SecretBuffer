@@ -110,4 +110,69 @@ sub new {
    $self;
 }
 
+=attribute capacity
+
+  say $buf->capacity;
+  $buf->capacity($n_bytes)->...
+  $buf->capacity($n_bytes, 'AT_LEAST')->...
+
+This reads or writes the allocated length of the buffer, presumably because you know how much
+space you need for an upcoming reead operation, but it can also free up space you know you no
+longer need.  In the third example, a second parameter 'AT_LEAST' is passed to indicate that
+the buffer does not need reallocated if it is already large enough.
+
+Capacity beyond 'length' is not initialized.
+
+=attribute length
+
+  say $buf->length;
+  $buf->length(0);
+  $buf->length(32);   # fills with 32 secure random bytes
+
+This gets or sets the length of the string in the buffer.  If you set it to a smaller value,
+the string is truncated.  If you set it to a larger value, the L</capacity> is raised as needed
+and the bytes are initialized with L</append_random>.
+
+=method append_random
+
+  $byte_count= $buf->append_random($n_bytes);
+  $byte_count= $buf->append_random($n_bytes, 'NONBLOCK');
+  $byte_count= $buf->append_random($n_bytes, 'FULLCOUNT');
+
+Append N cryptographic-quality random bytes.  This uses either the c library 'getrandom' call
+with C<GRND_RANDOM>, or if that isn't available, it reads from /dev/random.  The NONBLOCK flag
+can be used to avoid blocking waiting on entropy, and the 'FULLCOUNT' flag can be used to loop
+if the call returns fewer than the requested bytes.
+
+=method append_tty_line
+
+  $byte_count= $buf->append_tty_line(STDIN);
+  $byte_count= $buf->append_tty_line(STDIN, $max_chars);
+
+This turns off TTY echo, reads characters until newline or EOF storing them in the buffer
+(excluding the trailing \r or \n) and returns the number of characters added.  This appends to
+the buffer.
+
+=method append_sysread
+
+  $byte_count= $buf->append_sysread($fh, $count);
+  $byte_count= $buf->append_sysread($fh, $count, 'NONBLOCK');
+  $byte_count= $buf->append_sysread($fh, $count, 'FULLCOUNT');
+
+This performs a low-level read from the file handle and appends the bytes to the buffer.
+It must be a real file handle with an underlying file descriptor number (C<fileno>).
+Note that on most unixes, 'NONBLOCK' does not apply to disk files, only to pipes, sockets, etc.
+'FULLCOUNT' is used to loop on a short blocking read until the desired C<$count>.
+
+=method as_pipe
+
+  $fh= $buf->as_pipe
+
+This returns a new file handle from the read-end of a pipe which contains this buffer's data.
+A pipe can typically hold at least 4096 bytes, or often much more, but if your buffer is not able
+to fit entirely into the OS pipe buffer, this function will fork off a child worker to feed the
+pipe with the current contents of this buffer.
+
+=cut
+
 1;

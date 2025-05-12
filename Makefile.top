@@ -2,6 +2,7 @@ our %PREREQ_PM;
 BEGIN {
     %PREREQ_PM= (
         'ExtUtils::Depends' => '0.405',
+        'Devel::CheckLib'   => '1.03',
     );
 
     # If the prereqs for this script are missing,
@@ -20,8 +21,45 @@ BEGIN {
 }
 
 my $dep= ExtUtils::Depends->new('Crypt::SecretBuffer');
+my @incpath;
+my @libpath;
+my @have;
 
-$dep->add_headers('SecretBuffer.h');
+if (check_lib(
+   function => 'char buf[10]; RAND_bytes(buf, sizeof(buf)); return 0;',
+   header   => 'openssl/rand.h',
+   lib      => 'ssl',
+   incpath  => \@incpath,
+   libpath  => \@libpath,
+)) {
+   warn "Found OpenSSL";
+   push @have, 'LIBSSL';
+}
+elsif (check_lib(
+   function => 'char buf[10]; return (getrandom(buf, sizeof(buf), 0) > 0)? 0 : 2;',
+   header   => 'sys/random.h',
+   incpath  => \@incpath,
+   libpath  => \@libpath,
+)) {
+   warn "Found getrandom()";
+   push @have, 'GETRANDOM';
+}
+
+if (check_lib(
+   function => 'char buf[10]; explicit_bzero(buf, sizeof(buf)); return 0;',
+   header   => 'string.h',
+   incpath  => \@incpath,
+   libpath  => \@libpath,
+)) {
+   warn "Found explicit_bzero";
+   push @have, 'EXPLICIT_BZERO';
+}
+
+$dep->set_libs(join ' ', (map "-L$_", @libpath))
+   if @libpath;
+$dep->set_inc(join ' ', map "-I$_", @incpath)
+   if @incpath;
+$dep->install('SecretBuffer.h');
 $dep->add_xs('SecretBuffer.xs');
 $dep->add_pm(map { my $n= $_; $n =~ s/^lib/\$(INST_LIB)/; $_ => $n } <lib/*/*.pm>, <lib/*/*/*.pm>);
 $dep->add_typemaps('typemap');
