@@ -9,13 +9,35 @@
 #include <termios.h>
 #include <unistd.h>
 
-#if HAVE_LIBSSL
-#include <openssl/rand.h>
-#include <openssl/crypto.h>
-#endif
-
 #if HAVE_GETRANDOM
 #include <sys/random.h>
+#endif
+
+#ifdef WIN32
+#include <wincrypt.h>
+
+void croak_with_windows_error(const char *prefix, DWORD err_code) {
+   char message_buffer[512];
+   DWORD length;
+
+   length = FormatMessageA(
+      FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+      NULL,
+      error_code,
+      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+      message_buffer,
+      sizeof(message_buffer),
+      NULL
+   );
+
+   if (length)
+      croak("%s: %s (%lu)", prefix, message_buffer, error_code);
+   else
+      croak("%s: %lu", prefix, error_code);
+}
+
+#else /* not WIN32 */
+#include <pthread.h>
 #endif
 
 /**********************************************************************************************\
@@ -124,8 +146,8 @@ void secret_buffer_copy(secret_buffer *dst, secret_buffer *src) {
  * compiled, or a simple 'explicit_bzero' or 'bzero' otherwise.
  */
 void secret_buffer_wipe(char *buf, size_t len) {
-#if defined HAVE_LIBSSL
-   OPENSSL_cleanse(buf, len);
+#if defined WIN32
+   SecureZeroMemory(buf, len);
 #elif defined HAVE_EXPLICIT_BZERO
    explicit_bzero(buf, len);
 #else
@@ -137,46 +159,112 @@ void secret_buffer_wipe(char *buf, size_t len) {
 size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags) {
    size_t orig_len= buf->len;
    char *dest;
-   IV got;
-   int fd;
 
    if (!n)
       return 0;
    if (buf->capacity < buf->len + n)
       secret_buffer_alloc_at_least(buf, buf->len + n);
    dest= buf->data + buf->len;
-#if defined HAVE_GETRANDOM
-   got= getrandom(dest, n, GRND_RANDOM | (flags & SECRET_BUFFER_APPEND_NONBLOCK? GRND_NONBLOCK : 0));
-   if (got < 0) {
-      if (errno != EAGAIN)
-         croak("getrandom() failed");
-      got= 0;
+
+#ifdef WIN32
+   {
+      HCRYPTPROV hProv;
+
+      if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+         croak_with_windows_error("CryptAcquireContext failed", GetLastError());
+
+      if (!CryptGenRandom(hProv, sizeof(buffer), buffer)) {
+         DWORD err_id= GetLastError();
+         CryptReleaseContext(hProv, 0);
+         croak_with_windows_error("CryptGenRandom failed", err_id);
+      }
+
+      CryptReleaseContext(hProv, 0);
    }
-   buf->len += got;
-#else
-   fd= open("/dev/random", O_RDONLY | (flags & SECRET_BUFFER_APPEND_NONBLOCK? O_NONBLOCK : 0));
-   if (fd < 0) croak("Failed opening /dev/random");
-   while (n > 0) {
-      got= read(fd, dest, n);
-      if (got <= 0) {
+#elif defined HAVE_GETRANDOM
+   {
+      IV got= getrandom(dest, n, GRND_RANDOM | (flags & SECRET_BUFFER_NONBLOCK? GRND_NONBLOCK : 0));
+      if (got < 0) {
          if (errno != EAGAIN)
-            close(fd), croak("Failed to read from /dev/random");
+            croak("getrandom() failed");
+         got= 0;
       }
-      else {
-         dest += got;
-         buf->len += got;
-         n -= got;
-      }
-      if (!(flags & SECRET_BUFFER_APPEND_FULLCOUNT))
-         break;
+      buf->len += got;
    }
-   close(fd);
+#else
+   {
+      int fd= open("/dev/random", O_RDONLY | (flags & SECRET_BUFFER_NONBLOCK? O_NONBLOCK : 0));
+      if (fd < 0) croak("Failed opening /dev/random");
+      while (n > 0) {
+         got= read(fd, dest, n);
+         if (got <= 0) {
+            if (errno != EAGAIN)
+               close(fd), croak("Failed to read from /dev/random");
+         }
+         else {
+            dest += got;
+            buf->len += got;
+            n -= got;
+         }
+         if (!(flags & SECRET_BUFFER_FULLCOUNT))
+            break;
+      }
+      close(fd);
+   }
 #endif
    return buf->len - orig_len;
 }
 
 size_t secret_buffer_append_tty_line(secret_buffer *buf, PerlIO *tty, int max_chars, unsigned flags) {
    size_t orig_len = buf->len;
+#ifdef WIN32
+   HANDLE hConsole = GetStdHandle(STD_INPUT_HANDLE);
+   DWORD old_mode, new_mode;
+   BOOL success;
+   char ch;
+   DWORD chars_read;
+
+   if (hConsole == INVALID_HANDLE_VALUE)
+      croak("Invalid console handle");
+
+   /* Get current console mode */
+   if (!GetConsoleMode(hConsole, &old_mode))
+      croak_with_windows_error("Failed to get console mode", GetLastError());
+
+   /* Set console mode to disable echo */
+   new_mode = old_mode & ~ENABLE_ECHO_INPUT;
+   if (!SetConsoleMode(hConsole, new_mode))
+      croak_with_windows_error("Failed to set console mode", GetLastError());
+
+   /* Read characters until newline or max_chars */
+   while (max_chars != 0) {
+      /* Handle non-blocking read if requested */
+      if (flags & SECRET_BUFFER_NONBLOCK) {
+         /* Check if input is available */
+         DWORD available = 0;
+         PeekConsoleInput(hConsole, NULL, 0, &available);
+         if (available == 0) break;
+      }
+      success = ReadConsole(hConsole, &ch, 1, &chars_read, NULL);
+      if (!success || chars_read == 0)
+         break;
+     
+      if (ch == '\r' || ch == '\n')
+         break;
+     
+      /* Ensure buffer capacity */
+      if (buf->capacity < buf->len + 1)
+         secret_buffer_alloc_at_least(buf, buf->len + 1);
+         
+      buf->data[buf->len++] = ch;
+
+      if (max_chars > 0)
+         --max_chars;
+   }
+
+   /* Restore original console mode */
+   SetConsoleMode(hConsole, old_mode);
+#else
    int tty_fd = PerlIO_fileno(tty), ch;
    struct termios old, raw;
    
@@ -200,167 +288,341 @@ size_t secret_buffer_append_tty_line(secret_buffer *buf, PerlIO *tty, int max_ch
    }
 
    tcsetattr(tty_fd, TCSAFLUSH, &old);  // restore echo
-   
+#endif   
    return buf->len - orig_len;  // Return number of bytes read
 }
 
 size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_t count, unsigned flags) {
    size_t orig_len = buf->len;
-   int fd = PerlIO_fileno(fh);
-   ssize_t got;
-   char *dest;
-   
-   if (fd < 0)
-      croak("Invalid file descriptor");
-      
+
    if (!count)
       return 0;
-   
-   /* Ensure we have enough space in the buffer */
+
    if (buf->capacity < buf->len + count)
       secret_buffer_alloc_at_least(buf, buf->len + count);
-   
-   dest = buf->data + buf->len;
-   
-   /* Read directly using recv with MSG_DONTWAIT */
-   while (count > 0) {
-      got = recv(fd, dest, count, 
-                 (flags & SECRET_BUFFER_APPEND_NONBLOCK) ? MSG_DONTWAIT : 0);
-      
-      if (got > 0) {
-         dest += got;
-         buf->len += got;
-         count -= got;
-      } 
-      else if (got == 0
-         || ((errno == EAGAIN || errno == EWOULDBLOCK) && (flags & SECRET_BUFFER_APPEND_NONBLOCK))
-      ) {
-         /* End of file, or end of available bytes in nonblocking mode */
-         break;
+
+#ifdef WIN32
+   {
+      HANDLE hFile = (HANDLE)_get_osfhandle(PerlIO_fileno(fh));
+      DWORD bytes_read, error_code;
+      BOOL success;
+    
+      if (hFile == INVALID_HANDLE_VALUE)
+         croak("Invalid file handle");
+    
+      /* Use overlapped I/O for non-blocking operation if requested */
+      if (flags & SECRET_BUFFER_NONBLOCK) {
+         OVERLAPPED overlapped = {0};
+         overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+        
+         if (!overlapped.hEvent)
+            croak_with_windows_error("Failed to create event for overlapped I/O", GetLastError());
+        
+         success = ReadFile(hFile, buf->data + buf->len, (DWORD)count, NULL, &overlapped);
+        
+         if (!success) {
+            error_code = GetLastError();
+            if (error_code == ERROR_IO_PENDING) {
+               /* I/O is pending, check if we want to wait */
+               if (flags & SECRET_BUFFER_FULLCOUNT) {
+                  if (WaitForSingleObject(overlapped.hEvent, INFINITE) == WAIT_OBJECT_0) {
+                     GetOverlappedResult(hFile, &overlapped, &bytes_read, TRUE);
+                     buf->len += bytes_read;
+                  }
+               } else {
+                  /* Just return what we have so far */
+                  CancelIo(hFile);
+               }
+            } else {
+               CloseHandle(overlapped.hEvent);
+               croak_with_windows_error("Failed to read from file", error_code);
+            }
+         } else {
+            GetOverlappedResult(hFile, &overlapped, &bytes_read, TRUE);
+            buf->len += bytes_read;
+         }
+        
+         CloseHandle(overlapped.hEvent);
+      } else {
+         /* Blocking read */
+         success = ReadFile(hFile, buf->data + buf->len, (DWORD)count, &bytes_read, NULL);
+        
+         if (!success)
+            croak("Failed to read from file: %lu", GetLastError());
+        
+         buf->len += bytes_read;
       }
-      else
-         croak("Failed to read from file: %s", strerror(errno));
-      
-      /* If not in FULLCOUNT mode, exit after first read attempt */
-      if (!(flags & SECRET_BUFFER_APPEND_FULLCOUNT))
-         break;
-   }
-   
+   } /* win32 */
+#else
+   { /* posix */
+      int fd = PerlIO_fileno(fh);
+      ssize_t got;
+      char *dest= buf->data + buf->len;
+      /* Use recv so we can perform a nonblocking read without altering the fd state */
+      while (count > 0) {
+         got = recv(fd, dest, count, 
+                    (flags & SECRET_BUFFER_NONBLOCK) ? MSG_DONTWAIT : 0);
+         
+         if (got > 0) {
+            dest += got;
+            buf->len += got;
+            count -= got;
+         } 
+         else if (got == 0
+            || ((errno == EAGAIN || errno == EWOULDBLOCK) && (flags & SECRET_BUFFER_NONBLOCK))
+         ) {
+            /* End of file, or end of available bytes in nonblocking mode */
+            break;
+         }
+         else
+            croak("Failed to read from file: %s", strerror(errno));
+         
+         /* If not in FULLCOUNT mode, exit after first read attempt */
+         if (!(flags & SECRET_BUFFER_FULLCOUNT))
+            break;
+      }
+   } /* posix */
+#endif
    return buf->len - orig_len;  // Return number of bytes read
 }
 
-SV* secret_buffer_as_pipe(secret_buffer *buf) {
-   int pipefd[2] = { -1, -1 };
-   pid_t pid;
-   ssize_t written;
-   const char *err = NULL;
-   SV *fh = NULL;
-   PerlIO *pio = NULL, *old_io= NULL;
-   GV *gv;
-   
-   /* Create the pipe */
-   if (pipe(pipefd) == -1) {
-      err = "Failed to create pipe";
-      goto cleanup;
-   }
-   
-   /* Get and set non-blocking mode */
-   int flags = fcntl(pipefd[1], F_GETFL);
-   if (flags == -1) {
-      err = "Failed to get pipe write end flags";
-      goto cleanup;
-   }
-   
-   if (fcntl(pipefd[1], F_SETFL, flags | O_NONBLOCK) == -1) {
-      err = "Failed to set non-blocking mode on pipe write end";
-      goto cleanup;
-   }
-   
-   /* Attempt to write buffer */
-   written = write(pipefd[1], buf->data, buf->len);
-   if (written < 0) {
-      err = "Unexpected error writing to pipe";
-      goto cleanup;
-   }
-   
-   /* Check if a full write didn't occur */
-   if (written < buf->len) {
-      /* Entire buffer fit in pipe, close write end */
-      close(pipefd[1]);
-   }
-   else {
-      /* Need to fork to complete writing */
-      pid = fork();
-      
-      if (pid < 0) {
-         err = "Failed to fork pipe writer";
-         goto cleanup;
-      }
-      
-      if (pid == 0) {
-         /* Child process */
-         size_t total_written = written;
+#ifdef WIN32
+/* Structure to pass data to thread */
+typedef struct {
+   HANDLE hFile;
+   size_t count;
+   char bytes[]
+} WriteThread_Params;
 
-         close(pipefd[0]);  /* Close read end in child */
-         
-         /* Set blocking mode */
-         if (fcntl(pipefd[1], F_SETFL, flags) == -1) {
-            warn("Failed to set blocking mode on pipe write end");
-            exit(1);
-         }
-         
-         /* Write remaining buffer */
-         while (total_written < buf->len) {
-            ssize_t chunk_written = write(pipefd[1], buf->data + total_written, buf->len - total_written);
-            
-            if (chunk_written < 0) {
-               if (errno == EPIPE) {
-                     /* Reader closed, just exit */
-                     exit(0);
-               }
-               warn("Error writing to pipe: %s", strerror(errno));
-               exit(1);
-            }
-            
-            total_written += chunk_written;
-         }
-         
-         close(pipefd[1]);
-         exit(0);
+/* Thread procedure for Windows background writing */
+DWORD WINAPI WriteThread_Proc(LPVOID lpParameter) {
+   WriteThreadData *params = (WriteThreadData*)lpParameter;
+   DWORD wrote;
+   size_t total_written= 0;
+   BOOL success;
+   /* Write remaining data in blocking mode */
+   while (total_written < params->count) {
+      BOOL success = WriteFile(
+         params->hFile, 
+         params->bytes + total_written, 
+         (DWORD)(params->count - total_written), 
+         &wrote, NULL);
+
+      if (!success || wrote == 0) {
+         /* Handle might be closed or error occurred */
+         break;
       }
-      
-      /* Parent process continues */
-      close(pipefd[1]);
-      pipefd[1] = -1;
+      total_written += wrote;
    }
-   
-   /* Create a Perl filehandle for the pipe read end */
-   pio = PerlIO_fdopen(pipefd[0], "r");
-   if (!pio) {
-      close(pipefd[0]);
-      croak("Failed to create Perl file handle for pipe");
+   /* Clean up */
+   CloseHandle(params->hFile);
+   secret_buffer_wipe(params->bytes, params->count);
+   free(params);
+   return 0;
+}
+#else /* not WIN32 */
+/* Structure to pass data to thread */
+typedef struct {
+   int fd;
+   size_t count;
+   char bytes[];
+} WriteThread_Params;
+
+/* POSIX background writer thread */
+void *WriteThread_Proc(void *arg) {
+   WriteThread_Params *params = (WriteThread_Params *)arg;
+   ssize_t written;
+   size_t total_written = 0;
+
+   /* Blocking mode assumed */
+   while (total_written < params->count) {
+      written = write(params->fd, params->bytes + total_written,
+                      params->count - total_written);
+      if (written < 0) {
+         if (errno == EINTR)
+            continue;
+         if (errno != EPIPE)
+            warn("Error writing to file: %s", strerror(errno));
+         break;
+      }
+      if (written == 0) {
+         /* Extremely rare in blocking write, but avoid busy loop */
+         usleep(1000);
+         continue;
+      }
+      total_written += written;
    }
-   gv= newGVgen("Crypt::SecretBuffer::_pipe");
-   old_io= IoIFP(GvIOp(gv));
-   if (old_io) PerlIO_close(old_io);
-   IoIFP(GvIOp(gv))= pio;
-   IoOFP(GvIOp(gv))= pio;
-   
-   fh= (SV*) newRV_noinc((SV *)gv);
-   sv_bless(fh, gv_stashpv("IO::Handle", 1));
-   
-   /* Successfully created file handle, so return it */
-   return fh;
-   
-   cleanup: {
-      int err_save= errno;
-      /* Close any open file descriptors */
-      if (pipefd[0] >= 0) close(pipefd[0]);
-      if (pipefd[1] >= 0) close(pipefd[1]);
-      /* Raise Perl exception with detailed error */
-      errno = err_save;
-      croak("%s: %s", err, strerror(errno));
-   }
+
+   /* Clean sensitive data */
+   secret_buffer_wipe(params->bytes, params->count);
+   free(params);
+   return NULL;
+}
+#endif /* not WIN32 */
+
+size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count, unsigned flags) {
+   const char *err = NULL;
+   int saved_errno = 0;
+   size_t bytes_written = 0;
+    
+   if (offset > buf->len)
+      croak("Offset exceeds buffer length");
+    
+   if (offset + count > buf->len)
+      count = buf->len - offset;
+    
+   if (count == 0)
+      return 0;
+
+#ifdef WIN32
+   {
+      HANDLE hFile = (HANDLE)_get_osfhandle(PerlIO_fileno(fh));
+      DWORD written = 0;
+      BOOL success;
+
+      if (hFile == INVALID_HANDLE_VALUE)
+         croak("Invalid file handle");
+
+      /* First attempt to write in non-blocking mode if requested */
+      if (flags & SECRET_BUFFER_NONBLOCK) {
+         OVERLAPPED overlapped = {0};
+         overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+        
+         if (!overlapped.hEvent)
+            croak_with_windows_error("Failed to create event for overlapped I/O", GetLastError());
+
+         success = WriteFile(hFile, buf->data + offset, (DWORD)count, NULL, &overlapped);
+         if (!success && GetLastError() == ERROR_IO_PENDING)
+            /* Check if the write completed immediately */
+            success = GetOverlappedResult(hFile, &overlapped, &written, FALSE);
+
+         CloseHandle(overlapped.hEvent);
+         if (success)
+            bytes_written = written;
+      } else {
+         /* Blocking write */
+         success = WriteFile(hFile, buf->data + offset, (DWORD)count, &written, NULL);
+         if (success)
+            bytes_written = written;
+      }
+
+      /* If both NONBLOCK and FULLCOUNT are specified, and we haven't written everything,
+         create a thread to complete the write */
+      if ((flags & (SECRET_BUFFER_NONBLOCK | SECRET_BUFFER_FULLCOUNT)) == 
+        (SECRET_BUFFER_NONBLOCK | SECRET_BUFFER_FULLCOUNT) && 
+        bytes_written < count
+      ) {
+         size_t remaining= count - bytes_written;
+         WriteThread_Params *params= (WriteThread_Params*) malloc(sizeof(WriteThread_Params) + remaining);
+         if (!params)
+            croak("Failed to allocate memory for thread data");
+        
+         /* Duplicate the file handle for the thread */
+         if (!DuplicateHandle(
+            GetCurrentProcess(), 
+            hFile, 
+            GetCurrentProcess(), 
+            &params->hFile, 
+            0, 
+            FALSE, 
+            DUPLICATE_SAME_ACCESS)
+         ) {
+            free(params);
+            croak_with_windows_error("Failed to duplicate handle for thread", GetLastError());
+         }
+
+         /* Copy the part of the buffer we need to write */
+         memcpy(params->bytes, buf->data + offset + bytes_written, remaining);
+         params->count= remaining;
+
+         /* Launch thread */
+         HANDLE hThread = CreateThread(
+            NULL,                   /* default security attributes */
+            0,                      /* default stack size */
+            (LPTHREAD_START_ROUTINE)WriteFileThreadProc,
+            params,                 /* thread parameter */
+            0,                      /* default creation flags */
+            NULL);                  /* receive thread identifier */
+
+         if (hThread == NULL) {
+            CloseHandle(params->hFile);
+            secret_buffer_wipe(params->bytes, params->count);
+            free(params);
+            croak_with_windows_error("Failed to create thread", GetLastError());
+         }
+
+         /* We don't need to wait for the thread, so just close the handle */
+         CloseHandle(hThread);
+      }
+   } /* Win32 */
+#else
+   { /* POSIX */
+      int fd = PerlIO_fileno(fh);
+      ssize_t written;
+    
+      if (fd < 0)
+         croak("Invalid file descriptor");
+    
+      /* Set non-blocking mode if requested */
+      int old_flags = 0;
+      if (flags & SECRET_BUFFER_NONBLOCK) {
+         old_flags = fcntl(fd, F_GETFL);
+         if (old_flags >= 0)
+            fcntl(fd, F_SETFL, old_flags | O_NONBLOCK);
+      }
+
+      /* First write attempt */
+      written = write(fd, buf->data + offset, count);
+
+      /* Restore blocking mode if we changed it */
+      if ((flags & SECRET_BUFFER_NONBLOCK) && old_flags >= 0) {
+         fcntl(fd, F_SETFL, old_flags);
+      }
+
+      if (written < 0) {
+         if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            written = 0;
+         } else {
+            croak("Failed to write to file: %s", strerror(errno));
+         }
+      }
+
+      bytes_written = (written > 0) ? written : 0;
+    
+      /* If both NONBLOCK and FULLCOUNT are specified, and we haven't written everything,
+         fork a child process to complete the write */
+      if ((flags & (SECRET_BUFFER_NONBLOCK | SECRET_BUFFER_FULLCOUNT)) == 
+         (SECRET_BUFFER_NONBLOCK | SECRET_BUFFER_FULLCOUNT) && 
+         bytes_written < count
+      ) {
+         size_t remaining = count - bytes_written;
+         pthread_t thread;
+         WriteThread_Params *params = malloc(sizeof(WriteThread_Params) + remaining);
+         if (!params)
+            croak("Failed to allocate memory for thread data");
+
+         params->fd = dup(fd);
+         /* Set blocking mode for remaining writes */
+         if (params->fd < 0 || fcntl(params->fd, F_SETFL, fcntl(params->fd, F_GETFL) & ~O_NONBLOCK) < 0) {
+            free(params);
+            croak("dup: %s", strerror(errno));
+         }
+         /* Give it a copy of the unwritten secret */
+         memcpy(params->bytes, buf->data + offset + bytes_written, remaining);
+         params->count= remaining;
+         /* Launch pthread */
+         if (pthread_create(&thread, NULL, WriteThread_Proc, params) != 0) {
+            close(params->fd);
+            secret_buffer_wipe(params->bytes, params->count);
+            free(params);
+            croak("Failed to create POSIX writer thread: %s", strerror(errno));
+         }
+         /* Detach so resources are freed on exit */
+         pthread_detach(thread); /* Parent continues without waiting for child */
+      }
+   } /* POSIX */
+#endif
+   return bytes_written;
 }
 
 /*
@@ -468,6 +730,15 @@ secret_buffer* secret_buffer_from_magic(SV *obj, int flags) {
 typedef secret_buffer  *auto_secret_buffer;
 typedef secret_buffer  *maybe_secret_buffer;
 
+#define EXPORT_ENUM(x) newCONSTSUB(stash, #x, new_enum_dualvar(aTHX_ x, newSVpvs_share(#x)))
+static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
+   SvUPGRADE(name, SVt_PVNV);
+   SvIV_set(name, ival);
+   SvIOK_on(name);
+   SvREADONLY_on(name);
+   return name;
+}
+
 /**********************************************************************************************\
 * Crypt::SecretBuffer API
 \**********************************************************************************************/
@@ -511,7 +782,7 @@ length(buf, val=NULL)
       if (val) { /* writing */
          IV ival= SvIV(val);
          if (ival > buf->len)
-            secret_buffer_append_random(buf, ival - buf->len, SECRET_BUFFER_APPEND_FULLCOUNT);
+            secret_buffer_append_random(buf, ival - buf->len, SECRET_BUFFER_FULLCOUNT);
          else
             buf->len= ival > 0? ival : 0;
          /* return self, for chaining */
@@ -571,7 +842,17 @@ append_sysread(buf, io, count, flags=0)
    OUTPUT:
       RETVAL
 
-
+UV
+syswrite(buf, io, offset=0, count=buf->len, flags=0)
+   auto_secret_buffer buf
+   PerlIO *io
+   UV offset
+   UV count
+   UV flags
+   CODE:
+      RETVAL= secret_buffer_syswrite(buf, io, offset, count, flags);
+   OUTPUT:
+      RETVAL
 
 SV *
 stringify(buf, ...)
@@ -587,3 +868,8 @@ stringify(buf, ...)
          ST(0)= secret_buffer_get_stringify_sv(buf);
       }
       XSRETURN(1);
+
+BOOT:
+   HV *stash= gv_stashpvn("Crypt::SecretBuffer", 19, 1);
+   newCONSTSUB(stash, "NONBLOCK",  new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK, newSVpvs_share("NONBLOCK")));
+   newCONSTSUB(stash, "FULLCOUNT", new_enum_dualvar(aTHX_ SECRET_BUFFER_FULLCOUNT, newSVpvs_share("FULLCOUNT")));

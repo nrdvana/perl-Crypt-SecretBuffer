@@ -88,11 +88,13 @@ XSLoader::load('Crypt::SecretBuffer', $Crypt::SecretBuffer::VERSION);
 {
    package Crypt::SecretBuffer::Exports;
    use Exporter 'import';
-   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret );
+   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret NONBLOCK FULLCOUNT );
    sub secret_buffer {
       Crypt::SecretBuffer->new(@_)
    }
    *secret= *secret_buffer;
+   *NONBLOCK= *Crypt::SecretBuffer::NONBLOCK;
+   *FULLCOUNT= *Crypt::SecretBuffer::FULLCOUNT;
 }
 
 sub import {
@@ -102,10 +104,10 @@ sub import {
 
 sub new {
    my $self= bless {}, shift;
-   if (@_ == 1) {
-      $self->assign($_[0]);
-   } else {
-      %$self= @_;
+   $self->assign(shift) if @_ == 1;
+   while (@_) {
+      my ($attr, $val)= splice(@_, 0, 2);
+      $self->$attr($val);
    }
    $self;
 }
@@ -114,7 +116,7 @@ sub new {
 
   say $buf->capacity;
   $buf->capacity($n_bytes)->...
-  $buf->capacity($n_bytes, 'AT_LEAST')->...
+  $buf->capacity($n_bytes, AT_LEAST)->...
 
 This reads or writes the allocated length of the buffer, presumably because you know how much
 space you need for an upcoming reead operation, but it can also free up space you know you no
@@ -136,8 +138,8 @@ and the bytes are initialized with L</append_random>.
 =method append_random
 
   $byte_count= $buf->append_random($n_bytes);
-  $byte_count= $buf->append_random($n_bytes, 'NONBLOCK');
-  $byte_count= $buf->append_random($n_bytes, 'FULLCOUNT');
+  $byte_count= $buf->append_random($n_bytes, NONBLOCK);
+  $byte_count= $buf->append_random($n_bytes, FULLCOUNT);
 
 Append N cryptographic-quality random bytes.  This uses either the c library 'getrandom' call
 with C<GRND_RANDOM>, or if that isn't available, it reads from /dev/random.  The NONBLOCK flag
@@ -153,26 +155,56 @@ This turns off TTY echo, reads characters until newline or EOF storing them in t
 (excluding the trailing \r or \n) and returns the number of characters added.  This appends to
 the buffer.
 
+B<Win32 Note:> On Windows, this always reads from the Console, and the first parameter is
+ignored.
+
 =method append_sysread
 
   $byte_count= $buf->append_sysread($fh, $count);
-  $byte_count= $buf->append_sysread($fh, $count, 'NONBLOCK');
-  $byte_count= $buf->append_sysread($fh, $count, 'FULLCOUNT');
+  $byte_count= $buf->append_sysread($fh, $count, NONBLOCK);
+  $byte_count= $buf->append_sysread($fh, $count, FULLCOUNT);
 
 This performs a low-level read from the file handle and appends the bytes to the buffer.
 It must be a real file handle with an underlying file descriptor number (C<fileno>).
 Note that on most unixes, 'NONBLOCK' does not apply to disk files, only to pipes, sockets, etc.
 'FULLCOUNT' is used to loop on a short blocking read until the desired C<$count>.
 
+=method syswrite
+
+  $byte_count= $buf->syswrite($fh); # one syswrite attempt of whole buffer
+  $byte_count= $buf->syswrite($fh, $offset, $count); # subset of buffer
+  $byte_count= $buf->syswrite($fh, $offset, $count, NONBLOCK); # one non-blocking write
+  $byte_count= $buf->syswrite($fh, $offset, $count, NONBLOCK); # blocking write in a loop
+  $byte_count= $buf->syswrite($fh, $offset, $count, NONBLOCK|FULLCOUNT); # background thread
+
+This performs a low-level write from the buffer into a file handle.  It must be a real file
+handle with an underlying file descriptor (C<fileno>).
+
+The default behavior is to perform one blocking syswrite of the full buffer, and let you know
+how many bytes the OS wrote during that call.  If you specify the flag C<FULLCOUNT>, it will
+continue performing blocking writes until the full count is written, or an error occurs.  If
+you specify the flag C<NONBLOCK>, it makes one nonblocking attempt to write the buffer. If you
+specify both flags, it makes one nonblocking attempt and then if the complete data was not
+written it creates a background thread/process to continue blocking writes into that file handle
+until an error occurs or the full count is written.
+
 =method as_pipe
 
   $fh= $buf->as_pipe
 
-This returns a new file handle from the read-end of a pipe which contains this buffer's data.
-A pipe can typically hold at least 4096 bytes, or often much more, but if your buffer is not able
-to fit entirely into the OS pipe buffer, this function will fork off a child worker to feed the
-pipe with the current contents of this buffer.
+This creates a pipe, then calls C<< $self->syswrite(..., NONBLOCK|FULLCOUNT) >> into the
+write-end of the pipe (possibly spawning a background thread to keep pumping the data, but
+very unlikely to need to if your data is less than 4K) and then returns the read-end of the
+pipe.  You can then pass this pipe to other processes.
 
 =cut
+
+sub as_pipe {
+   my $self= shift;
+   pipe(my ($r, $w)) or die "pipe: $!";   
+   $self->syswrite($w, 0, $self->length, NONBLOCK()|FULLCOUNT());
+   close($w); # XS dups the file handle if it is writing async from a thread
+   return $r;
+}
 
 1;

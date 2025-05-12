@@ -6,6 +6,9 @@ typedef struct {
    SV *stringify_sv;
 } secret_buffer;
 
+#define SECRET_BUFFER_NONBLOCK  1
+#define SECRET_BUFFER_FULLCOUNT 2
+
 /* Reallocate (or free) the buffer of secret_buffer, fully erasing it before deallocation.
  * If capacity is zero, the buffer will be freed and 'data' pointer set to NULL.
  * Any other size will allocate exactly that number of bytes, copy any previous bytes,
@@ -19,8 +22,8 @@ extern void secret_buffer_realloc(secret_buffer *buf, size_t new_capacity);
 extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity);
 
 /* This is just exposing the wipe function of this library for general use.
- * It will be OPENSSL_cleanse if openssl (and headers) were available when this package was
- * compiled, or a simple 'explicit_bzero' or 'bzero' otherwise.
+ * It will be one of `explicit_bzero`, `SecureZeroMemory`, or just `bzero` which should
+ * be fine since it's in an extern function..
  */
 extern void secret_buffer_wipe(char *buf, size_t len);
 
@@ -30,8 +33,6 @@ extern void secret_buffer_wipe(char *buf, size_t len);
  * If you request the flag 'FULLCOUNT' it repeatedly runs blocking reads until it reaches the
  * desired count.
  */
-#define SECRET_BUFFER_APPEND_NONBLOCK  1
-#define SECRET_BUFFER_APPEND_FULLCOUNT 2
 extern size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags);
 
 /* Append one line of text from a TTY after disabling echo, not including the terminating
@@ -46,6 +47,17 @@ extern size_t secret_buffer_append_tty_line(secret_buffer *buf, PerlIO *tty, int
  * generically into perl scalars.
  */
 extern size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_t count, unsigned flags);
+
+/* Write a segment of this buffer into the supplied file handle.
+ * If SECRET_BUFFER_NONBLOCK flag is requested, this writes only as much as one syscall can fit
+ * into the pipe (or handle, or socket, etc).
+ * If SECRET_BUFFER_FULLCOUNT flag is requested, this continues looping as long as it doesn't
+ * get an error until the full requested 'count' is written.
+ * If you specify both NONBLOCK and FULLCOUNT flags, and the first write does not deliver the
+ * full count, then this forks off a thread to continue pumping data into the pipe.
+ * On Win32, you get a thread instead of a fork().
+ */
+extern size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count, unsigned flags);
 
 /* Return a magical SV which exposes the secret buffer.
  * This should be used sparingly, if at all, for interoperating with perl code that isn't
