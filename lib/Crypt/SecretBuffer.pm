@@ -1,25 +1,23 @@
 package Crypt::SecretBuffer;
 # VERSION
-# ABSTRACT: Prevent accidentally copying a string of sensitive data
+# ABSTRACT: Prevent accidentally leaking a string of sensitive data
 
 =head1 SYNOPSIS
 
   $buf= Crypt::SecretBuffer->new;
   print "Enter your password: ";
-  $buf->read_tty(\*STDIN)    # read TTY with echo disabled
+  $buf->append_tty_line(\*STDIN)  # read TTY with echo disabled
     or die "Aborted";
-  say $buf;                  # prints "[REDACTED]"
-  
-  my $fh= $buf->get_pipe;    # create pipe which secret can be read from
+  say $buf;                       # prints "[REDACTED]"
   
   my @cmd= qw( openssl enc -e -aes-256-cbc -md sha512 -pbkdf2 -iter 239823 -pass fd:3 );
   IPC::Run::run(\@cmd,
     '0<', \$data,
     '1>', \$ciphertext,
-    '3<', $fh                # Feed the password to an external command
-  );                         # without it ever being copied into a Perl scalar
+    '3<', $buf->as_pipe   # Feed the password to an external command
+  );                      # without it ever being copied into a Perl scalar
   
-  $fh->clear;                # no copies of password remain in memory.
+  undef $buf;             # no copies of password remain in memory.
 
 =head1 DESCRIPTION
 
@@ -28,37 +26,20 @@ lingering in memory of a long-running program.  It is very much like SecureStrin
 but with a better name.   (preventing accidental copies does not make something "secure", and
 "string" sometimes implies text or immutability)
 
-The goal of SecretBuffer is to avoid copying secrets into the pool of Perl scalars, which get
-reallocated all the time as you perform operations on it or pass it by value into a function.
+The goal of SecretBuffer is to avoid copying secrets into temporary Perl scalars, which could
+allow copies to remain cached in the backround, or leave copies in your freed heap memory.
+When you free a SecretBuffer, you can be fairly sure that the secret does not remain anywhere
+in your process address space.  (with the exception of when it's being fed into a pipe in the
+background; see L</as_pipe>)
+
 The SecretBuffer is a blessed reference, and the buffer itself is stored in XS in a way that
 the Perl interpreter has no knowledge of.  Any time the buffer needs reallocated, a new buffer
-is allocated, the secret is copied, and the old buffer is wiped clean.  It also protects
-against timing attacks by copying all the allocated buffer space instead of just the length
-that is occupied by the secret.
+is allocated, the secret is copied, and the old buffer is wiped clean before freeing it.
+It also protects against timing attacks by copying all the allocated buffer space instead of
+just the length that is occupied by the secret.
 
-The API gives you a few methods to read and write data from the secret without exposing it to
-the Perl interpreter:
-
-=over 12
-
-=item read_tty
-
-Reads a line of input from a TTY with echo turned off
-
-=item read_file
-
-Reads directly from a file or handle with sysread()
-
-=item write_file
-
-Writes directly to a file or handle with syswrite()
-
-=item get_pipe
-
-Fills the write-end of a pipe with the secret, possibly forking a worker to feed the pipe
-if the secret doesn't fit in the OS's pipe buffer.
-
-=back
+The API also provides you with a few ways to read or write the secret, since any read/write code
+implemented directly in Perl would fall into the copying problem.
 
 For interoperability with other Perl code, you can also toggle whether stringification of the
 buffer reveals the secret or not.  For instance:
@@ -70,8 +51,8 @@ buffer reveals the secret or not.  For instance:
   }
   say $buf;                            # stringifies as [REDACTED]
 
-This does run a bit of a risk of the secret leaking into freed memory, so try to use the methods
-above if possible.
+This does run a bit of a risk of the secret leaking into freed memory, so try to use the
+built-in methods if possible.
 
 =cut
 
@@ -79,11 +60,11 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util ();
+use parent qw( DynaLoader );
 use overload '""' => \&stringify;
 
-require XSLoader;
-sub dl_load_flags {0x01}
-XSLoader::load('Crypt::SecretBuffer', $Crypt::SecretBuffer::VERSION);
+sub dl_load_flags {0x01} # Share extern symbols with other modules
+bootstrap Crypt::SecretBuffer;
 
 {
    package Crypt::SecretBuffer::Exports;
@@ -135,6 +116,10 @@ This gets or sets the length of the string in the buffer.  If you set it to a sm
 the string is truncated.  If you set it to a larger value, the L</capacity> is raised as needed
 and the bytes are initialized with L</append_random>.
 
+=method clear
+
+Erases the buffer.  Equivalent to C<< $buf->length(0) >>
+
 =method append_random
 
   $byte_count= $buf->append_random($n_bytes);
@@ -146,14 +131,16 @@ with C<GRND_RANDOM>, or if that isn't available, it reads from /dev/random.  The
 can be used to avoid blocking waiting on entropy, and the 'FULLCOUNT' flag can be used to loop
 if the call returns fewer than the requested bytes.
 
+B<Win32 Note:> On Windows, the flags are irrelevant because it always returns the requested
+number of bytes and never blocks.
+
 =method append_tty_line
 
   $byte_count= $buf->append_tty_line(STDIN);
   $byte_count= $buf->append_tty_line(STDIN, $max_chars);
 
-This turns off TTY echo, reads characters until newline or EOF storing them in the buffer
-(excluding the trailing \r or \n) and returns the number of characters added.  This appends to
-the buffer.
+This turns off TTY echo, reads and appends characters until newline or EOF (and does not store
+the \r or \n characters) and returns the number of characters added.
 
 B<Win32 Note:> On Windows, this always reads from the Console, and the first parameter is
 ignored.
@@ -166,27 +153,28 @@ ignored.
 
 This performs a low-level read from the file handle and appends the bytes to the buffer.
 It must be a real file handle with an underlying file descriptor number (C<fileno>).
-Note that on most unixes, 'NONBLOCK' does not apply to disk files, only to pipes, sockets, etc.
-'FULLCOUNT' is used to loop on a short blocking read until the desired C<$count>.
+Note that on most unixes, C<NONBLOCK> does not apply to disk files, only to pipes, sockets, etc.
+C<FULLCOUNT> is used to loop on a short blocking read until the desired C<$count>.
 
 =method syswrite
 
   $byte_count= $buf->syswrite($fh); # one syswrite attempt of whole buffer
-  $byte_count= $buf->syswrite($fh, $offset, $count); # subset of buffer
-  $byte_count= $buf->syswrite($fh, $offset, $count, NONBLOCK); # one non-blocking write
-  $byte_count= $buf->syswrite($fh, $offset, $count, NONBLOCK); # blocking write in a loop
-  $byte_count= $buf->syswrite($fh, $offset, $count, NONBLOCK|FULLCOUNT); # background thread
+  $byte_count= $buf->syswrite($fh, $ofs, $n); # subset of buffer
+  $byte_count= $buf->syswrite($fh, $ofs, $n, NONBLOCK); # one non-blocking write
+  $byte_count= $buf->syswrite($fh, $ofs, $n, FULLCOUNT); # blocking write in a loop
+  $byte_count= $buf->syswrite($fh, $ofs, $n, NONBLOCK|FULLCOUNT); # maybe background thread
 
 This performs a low-level write from the buffer into a file handle.  It must be a real file
 handle with an underlying file descriptor (C<fileno>).
 
 The default behavior is to perform one blocking syswrite of the full buffer, and let you know
-how many bytes the OS wrote during that call.  If you specify the flag C<FULLCOUNT>, it will
-continue performing blocking writes until the full count is written, or an error occurs.  If
-you specify the flag C<NONBLOCK>, it makes one nonblocking attempt to write the buffer. If you
-specify both flags, it makes one nonblocking attempt and then if the complete data was not
-written it creates a background thread/process to continue blocking writes into that file handle
-until an error occurs or the full count is written.
+how many bytes the OS wrote during that call.  It croaks on errors.
+If you specify the flag C<FULLCOUNT>, it will continue performing blocking writes until the full
+count is written, or an error occurs.
+If you specify the flag C<NONBLOCK>, it makes one nonblocking attempt to write the buffer.
+If you specify both flags, it makes one nonblocking attempt and then if the complete data was
+not written it creates a background thread/process to continue blocking writes into that file
+handle until an error occurs or the full count is written.
 
 =method as_pipe
 
