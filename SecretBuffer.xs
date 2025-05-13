@@ -815,6 +815,13 @@ capacity(buf, val=NULL, or_larger= NULL)
          ST(0)= sv_2mortal(newSViv(buf->capacity));
       XSRETURN(1);
 
+void
+clear(buf)
+   auto_secret_buffer buf
+   PPCODE:
+      secret_buffer_realloc(buf, 0);
+      XSRETURN(1);
+
 UV
 append_random(buf, count, flags=0)
    auto_secret_buffer buf
@@ -873,6 +880,29 @@ stringify(buf, ...)
          ST(0)= secret_buffer_get_stringify_sv(buf);
       }
       XSRETURN(1);
+
+IV
+_count_matches_in_mem(buf, addr, len)
+   secret_buffer *buf
+   UV addr
+   UV len
+   INIT:
+      char *p= (char*)addr, *p2;
+      char *lim= p + len - (buf->len-1);
+      char first;
+   CODE:
+      if (!buf->len)
+         croak("Empty buffer");
+      warn("Scanning %p-%p (buffer at %p)", p, lim, buf->data);
+      first= buf->data[0];
+      RETVAL= 0;
+      while (p < lim && (p2= memchr(p, first, lim-p))) {
+         if (memcmp(p2, buf->data, buf->len) == 0)
+            ++RETVAL;
+         p= p2 + 1;
+      }
+   OUTPUT:
+      RETVAL
 
 BOOT:
    HV *stash= gv_stashpvn("Crypt::SecretBuffer", 19, 1);
