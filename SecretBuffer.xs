@@ -45,7 +45,7 @@ void croak_with_windows_error(const char *prefix, DWORD err_code) {
 \**********************************************************************************************/
 
 #ifdef USE_ITHREADS
-static int secret_bufer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
+static int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
 static int secret_buffer_stringify_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
 #else
 #define secret_buffer_magic_dup NULL
@@ -652,6 +652,11 @@ secret_buffer_stringify_magic_free(pTHX_ SV *sv, MAGIC *mg) {
    warn("Freeing stringify scalar");
 }
 
+static int
+secret_buffer_stringify_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
+   croak("Can't dup stringify_sv");
+}
+
 SV* secret_buffer_get_stringify_sv(secret_buffer *buf) {
    MAGIC *magic;
    SV *sv= buf->stringify_sv;
@@ -684,7 +689,7 @@ static int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg) {
 }
 
 #ifdef USE_ITHREADS
-static int secret_bufer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
+static int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
    secret_buffer *clone, *orig = (secret_buffer *)mg->mg_ptr;
    PERL_UNUSED_VAR(param);
    Newxz(clone, 1, secret_buffer);
