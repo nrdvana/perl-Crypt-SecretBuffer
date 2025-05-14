@@ -48,8 +48,8 @@ void croak_with_windows_error(const char *prefix, DWORD err_code) {
 static int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
 static int secret_buffer_stringify_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
 #else
-#define secret_buffer_magic_dup NULL
-#define secret_buffer_stringify_magic_dup NULL
+#define secret_buffer_magic_dup 0
+#define secret_buffer_stringify_magic_dup 0
 #endif
 
 static int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg);
@@ -652,10 +652,12 @@ secret_buffer_stringify_magic_free(pTHX_ SV *sv, MAGIC *mg) {
    warn("Freeing stringify scalar");
 }
 
+#ifdef USE_ITHREADS
 static int
 secret_buffer_stringify_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
    croak("Can't dup stringify_sv");
 }
+#endif
 
 SV* secret_buffer_get_stringify_sv(secret_buffer *buf) {
    MAGIC *magic;
@@ -743,6 +745,46 @@ static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
    SvREADONLY_on(name);
    return name;
 }
+
+/*
+ * Debug helpers
+ */
+
+#ifdef HAVE_MINCORE
+#include <sys/mman.h>
+#include <string.h>
+
+size_t scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needle, size_t needle_len) {
+   long pagesize = sysconf(_SC_PAGESIZE);
+   unsigned char vec;
+   size_t count= 0;
+   void *at;
+   uintptr_t run_start = p, run_lim;
+   p = (p & ~(pagesize - 1)); /* round to nearest page, from here out */
+   while (p < lim) {
+      // Skip pages that aren't mapped
+      while (p < lim && mincore((void*)p, pagesize, &vec) != 0) {
+         p += pagesize;
+         run_start= p;
+      }
+      // This page is mapped.  Find the end of this mapped range, if it comes before lim
+      while (p < lim && mincore((void*)p, pagesize, &vec) == 0) {
+         p += pagesize;
+      }
+      run_lim= p < lim? p : lim;
+      // Scan memory from run_start to run_lim
+      while (run_start < run_lim && (at= memmem((void*)run_start, run_lim - run_start, needle, needle_len))) {
+         ++count;
+         run_start= ((intptr_t)at) + needle_len;
+      }
+   }
+   return count;
+}
+#else
+size_t scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needle, size_t needle_len) {
+   croak("Unimplemented");
+}
+#endif
 
 /**********************************************************************************************\
 * Crypt::SecretBuffer API
@@ -882,25 +924,14 @@ stringify(buf, ...)
       XSRETURN(1);
 
 IV
-_count_matches_in_mem(buf, addr, len)
+_count_matches_in_mem(buf, addr0, addr1)
    secret_buffer *buf
-   UV addr
-   UV len
-   INIT:
-      char *p= (char*)addr, *p2;
-      char *lim= p + len - (buf->len-1);
-      char first;
+   UV addr0
+   UV addr1
    CODE:
       if (!buf->len)
          croak("Empty buffer");
-      warn("Scanning %p-%p (buffer at %p)", p, lim, buf->data);
-      first= buf->data[0];
-      RETVAL= 0;
-      while (p < lim && (p2= memchr(p, first, lim-p))) {
-         if (memcmp(p2, buf->data, buf->len) == 0)
-            ++RETVAL;
-         p= p2 + 1;
-      }
+      RETVAL= scan_mapped_memory_in_range(addr0, addr1, buf->data, buf->len);
    OUTPUT:
       RETVAL
 

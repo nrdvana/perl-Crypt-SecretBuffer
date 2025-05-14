@@ -25,35 +25,25 @@ my @incpath;
 my @libpath;
 my @have;
 
-if (check_lib(
-   function => 'char buf[10]; RAND_bytes(buf, sizeof(buf)); return 0;',
-   header   => 'openssl/rand.h',
-   lib      => 'ssl',
-   incpath  => \@incpath,
-   libpath  => \@libpath,
-)) {
-   warn "Found OpenSSL";
-   push @have, 'LIBSSL';
-}
-elsif (check_lib(
-   function => 'char buf[10]; return (getrandom(buf, sizeof(buf), 0) > 0)? 0 : 2;',
-   header   => 'sys/random.h',
-   incpath  => \@incpath,
-   libpath  => \@libpath,
-)) {
-   warn "Found getrandom()";
-   push @have, 'GETRANDOM';
+sub check_lib_fn {
+   my ($macro, $fname, $header, $lib)= @_;
+   if (check_lib(
+      # Just take the address of it, to verify it gets linked
+      function => 'void (*fn)()= (void(*)()) $fname; return fn != NULL;',
+      ($header? ( header => $header ) : ()),
+      ($lib? ( lib => $lib ) : ()),
+      incpath  => \@incpath,
+      libpath  => \@libpath,
+   )) {
+      warn "Found $fname";
+      push @have, $macro;
+   }
 }
 
-if (check_lib(
-   function => 'char buf[10]; explicit_bzero(buf, sizeof(buf)); return 0;',
-   header   => 'string.h',
-   incpath  => \@incpath,
-   libpath  => \@libpath,
-)) {
-   warn "Found explicit_bzero";
-   push @have, 'EXPLICIT_BZERO';
-}
+check_lib_fn(LIBSSL => 'RAND_bytes', 'openssl/rand.h', 'ssl');
+check_lib_fn(GETRANDOM => 'getrandom', 'sys/random.h');
+check_lib_fn(EXPLICIT_BZERO => 'explicit_bzero', 'string.h');
+check_lib_fn(MINCORE => 'mincore', 'sys/mman.h');
 
 $dep->set_libs(join ' ', (map "-L$_", @libpath))
    if @libpath;
