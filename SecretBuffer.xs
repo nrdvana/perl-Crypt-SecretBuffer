@@ -129,7 +129,7 @@ void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity) {
 }
 
 void secret_buffer_copy(secret_buffer *dst, secret_buffer *src) {
-   warn("secret_buffer_copy");
+   //warn("secret_buffer_copy");
    if (src->data && src->capacity) {
       secret_buffer_alloc_at_least(dst, src->len);
       memcpy(dst->data, src->data, src->capacity < dst->capacity? src->capacity : dst->capacity);
@@ -148,7 +148,7 @@ void secret_buffer_copy(secret_buffer *dst, secret_buffer *src) {
 void secret_buffer_wipe(char *buf, size_t len) {
 #if defined WIN32
    SecureZeroMemory(buf, len);
-#elif defined HAVE_EXPLICIT_BZERO
+#elif defined(HAVE_EXPLICIT_BZERO)
    explicit_bzero(buf, len);
 #else
    /* this ought to be sufficient anyway because its within an extern function */
@@ -181,7 +181,7 @@ size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags)
 
       CryptReleaseContext(hProv, 0);
    }
-#elif defined HAVE_GETRANDOM
+#elif defined(HAVE_GETRANDOM)
    {
       IV got= getrandom(dest, n, GRND_RANDOM | (flags & SECRET_BUFFER_NONBLOCK? GRND_NONBLOCK : 0));
       if (got < 0) {
@@ -632,7 +632,7 @@ size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, siz
 static int
 secret_buffer_stringify_magic_get(pTHX_ SV *sv, MAGIC *mg) {
    secret_buffer *buf= (secret_buffer *)mg->mg_ptr;
-   warn("secret_buffer_stringify_magic_get %p %p", buf->stringify_sv, sv);
+//   warn("secret_buffer_stringify_magic_get %p %p", buf->stringify_sv, sv);
    assert(buf->stringify_sv == sv);
    SvPVX(sv)= buf->data;
    SvCUR(sv)= buf->len;
@@ -649,7 +649,7 @@ secret_buffer_stringify_magic_set(pTHX_ SV *sv, MAGIC *mg) {
 
 static int
 secret_buffer_stringify_magic_free(pTHX_ SV *sv, MAGIC *mg) {
-   warn("Freeing stringify scalar");
+//   warn("Freeing stringify scalar");
 }
 
 #ifdef USE_ITHREADS
@@ -746,13 +746,78 @@ static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
    return name;
 }
 
-/*
- * Debug helpers
- */
+/* flag for capacity */
+#define SECRET_BUFFER_AT_LEAST 1
 
-#ifdef HAVE_MINCORE
+static IV parse_flags(SV *sv) {
+   if (!sv || !SvOK(sv))
+      return 0;
+   if (SvIOK(sv))
+      return SvIV(sv);
+   if (SvPOK(sv)) {
+      const char *str= SvPV_nolen(sv);
+      if (!str[0]) return 0;
+      if (strcmp(str, "NONBLOCK") == 0)  return SECRET_BUFFER_NONBLOCK;
+      if (strcmp(str, "FULLCOUNT") == 0) return SECRET_BUFFER_FULLCOUNT;
+      if (strcmp(str, "AT_LEAST") == 0)  return SECRET_BUFFER_AT_LEAST;
+   }
+   croak("Unknown flag %s", SvPV_nolen(sv));
+}
+
+/**********************************************************************************************\
+ * Debug helpers
+\**********************************************************************************************/
+
+// Helper function to check if a memory page is accessible (committed and readable)
+#if defined(WIN32)
+
+static bool is_page_accessible(uintptr_t addr) {
+   MEMORY_BASIC_INFORMATION memInfo;
+   if (VirtualQuery((LPCVOID)addr, &memInfo, sizeof(memInfo)) == 0)
+      return FALSE;
+   return (memInfo.State == MEM_COMMIT) && 
+          (memInfo.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE));
+}
+#define HAVE_IS_PAGE_ACESSIBLE
+
+static size_t get_page_size() {
+   long pagesize = sysconf(_SC_PAGESIZE);
+
+
+#elif defined(HAVE_MINCORE)
+
 #include <sys/mman.h>
-#include <string.h>
+static bool is_page_accessible(uintptr_t addr) {
+   unsigned char vec;
+   return mincore((void*)addr, 1, &vec) == 0;
+}
+#define HAVE_IS_PAGE_ACESSIBLE
+
+#endif
+
+#if defined(HAVE_IS_PAGE_ACESSIBLE)
+
+#ifndef HAVE_MEMMEM
+static void* memmem(
+   const void *haystack, size_t haystacklen,
+   const void *needle, size_t needlelen
+) {
+   const char *p= (const char*) haystack;
+   const char *lim= p + haystacklen - needlelen;
+   char first_ch= needle[0];
+   while (p < lim) {
+      if (*p == first_ch) {
+         // Check each position for the needle
+         if (memcmp(p, needle, needle_len) == 0) {
+            ++count;
+            p += needle_len;
+            continue;
+         }
+      }
+      ++p;
+   }
+}
+#endif /* HAVE_MEMMEM */
 
 size_t scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needle, size_t needle_len) {
    long pagesize = sysconf(_SC_PAGESIZE);
@@ -763,12 +828,12 @@ size_t scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needl
    p = (p & ~(pagesize - 1)); /* round to nearest page, from here out */
    while (p < lim) {
       // Skip pages that aren't mapped
-      while (p < lim && mincore((void*)p, pagesize, &vec) != 0) {
+      while (p < lim && !is_page_accessible(p)) {
          p += pagesize;
          run_start= p;
       }
       // This page is mapped.  Find the end of this mapped range, if it comes before lim
-      while (p < lim && mincore((void*)p, pagesize, &vec) == 0) {
+      while (p < lim && is_page_accessible(p)) {
          p += pagesize;
       }
       run_lim= p < lim? p : lim;
@@ -839,15 +904,16 @@ length(buf, val=NULL)
       XSRETURN(1);
 
 void
-capacity(buf, val=NULL, or_larger= NULL)
+capacity(buf, val=NULL, flag= NULL)
    auto_secret_buffer buf
    SV *val
-   SV *or_larger
+   SV *flag
    PPCODE:
       if (val) { /* wiritng */
          IV ival= SvIV(val);
+         IV iflag= parse_flags(flag);
          if (ival < 0) ival= 0;
-         if (or_larger && SvTRUE(or_larger))
+         if (iflag & SECRET_BUFFER_AT_LEAST)
             secret_buffer_alloc_at_least(buf, ival);
          else
             secret_buffer_realloc(buf, ival);
@@ -937,5 +1003,6 @@ _count_matches_in_mem(buf, addr0, addr1)
 
 BOOT:
    HV *stash= gv_stashpvn("Crypt::SecretBuffer", 19, 1);
-   newCONSTSUB(stash, "NONBLOCK",  new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK, newSVpvs_share("NONBLOCK")));
+   newCONSTSUB(stash, "NONBLOCK",  new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK,  newSVpvs_share("NONBLOCK")));
    newCONSTSUB(stash, "FULLCOUNT", new_enum_dualvar(aTHX_ SECRET_BUFFER_FULLCOUNT, newSVpvs_share("FULLCOUNT")));
+   newCONSTSUB(stash, "AT_LEAST",  new_enum_dualvar(aTHX_ SECRET_BUFFER_AT_LEAST,  newSVpvs_share("AT_LEAST")));

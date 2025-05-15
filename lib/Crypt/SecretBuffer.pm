@@ -74,8 +74,9 @@ bootstrap Crypt::SecretBuffer;
       Crypt::SecretBuffer->new(@_)
    }
    *secret= *secret_buffer;
-   *NONBLOCK= *Crypt::SecretBuffer::NONBLOCK;
+   *NONBLOCK=  *Crypt::SecretBuffer::NONBLOCK;
    *FULLCOUNT= *Crypt::SecretBuffer::FULLCOUNT;
+   *AT_LEAST=  *Crypt::SecretBuffer::AT_LEAST;
 }
 
 sub import {

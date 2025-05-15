@@ -44,6 +44,7 @@ check_lib_fn(LIBSSL => 'RAND_bytes', 'openssl/rand.h', 'ssl');
 check_lib_fn(GETRANDOM => 'getrandom', 'sys/random.h');
 check_lib_fn(EXPLICIT_BZERO => 'explicit_bzero', 'string.h');
 check_lib_fn(MINCORE => 'mincore', 'sys/mman.h');
+check_lib_fn(MEMMEM => 'memmem', 'string.h');
 
 $dep->set_libs(join ' ', (map "-L$_", @libpath))
    if @libpath;
