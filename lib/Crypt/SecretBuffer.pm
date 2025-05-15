@@ -24,25 +24,30 @@ package Crypt::SecretBuffer;
 This module helps you protect a secret value from getting copied around unintentionally or
 lingering in memory of a long-running program.  It is very much like SecureString from .NET,
 but with a better name.   (preventing accidental copies does not make something "secure", and
-"string" sometimes implies text or immutability)
+"string" sometimes implies text or immutability)  While a scripting language in general is a
+poor choice for managing sensitive data in a long-lived app instance, this at least gives you
+some measure of control over how long secrets remain in memory, and how easy it is to
+accidentally expose them to other code, such as log messages.  When you free a SecretBuffer,
+you can be fairly sure that the secret does not remain anywhere in your process address space.
+(with the exception of when it's being fed into a pipe in the background; see L</as_pipe>)
 
-The goal of SecretBuffer is to avoid copying secrets into temporary Perl scalars, which could
-allow copies to remain cached in the backround, or leave copies in your freed heap memory.
-When you free a SecretBuffer, you can be fairly sure that the secret does not remain anywhere
-in your process address space.  (with the exception of when it's being fed into a pipe in the
-background; see L</as_pipe>)
+This module exists because in standard OpenSSL examples they always wipe the buffers before
+exiting a function, but with Perl's exception behavior (C<croak>) there was no way to ensure
+that the buffers got wiped before exiting a function.  By putting all the secrets into
+Crypt::SecretBuffer objects, it at least ensures that the buffers are always wiped according to
+standard practices for C code.  Passing around SecretBuffer objects perl-side is just an added
+benefit.
 
 The SecretBuffer is a blessed reference, and the buffer itself is stored in XS in a way that
 the Perl interpreter has no knowledge of.  Any time the buffer needs reallocated, a new buffer
 is allocated, the secret is copied, and the old buffer is wiped clean before freeing it.
-It also protects against timing attacks by copying all the allocated buffer space instead of
+It also guards against timing attacks by copying all the allocated buffer space instead of
 just the length that is occupied by the secret.
 
 The API also provides you with a few ways to read or write the secret, since any read/write code
-implemented directly in Perl would fall into the copying problem.
-
-For interoperability with other Perl code, you can also toggle whether stringification of the
-buffer reveals the secret or not.  For instance:
+implemented directly in Perl would potentially expose your secret to having copies made in
+temporary buffers.  But, for interoperability with other Perl code, you can also toggle whether
+stringification of the buffer reveals the secret or not.  For instance:
 
   say $buf;                            # stringifies as [REDACTED]
   {
@@ -51,8 +56,10 @@ buffer reveals the secret or not.  For instance:
   }
   say $buf;                            # stringifies as [REDACTED]
 
-This does run a bit of a risk of the secret leaking into freed memory, so try to use the
-built-in methods if possible.
+There is no guarantee that the XS function in that example wouldn't make a copy of your secret,
+but this at least provides the secret buffer directly to the XS code that calls C<SvPV> without
+making a copy.  If an XS module is aware of Crypt::SecretBuffer, it can use a more official C
+API that doesn't rely on perl stringification behavior.
 
 =cut
 

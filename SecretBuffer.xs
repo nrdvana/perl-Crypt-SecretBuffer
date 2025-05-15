@@ -734,6 +734,15 @@ secret_buffer* secret_buffer_from_magic(SV *obj, int flags) {
    return NULL;
 }
 
+secret_buffer* secret_buffer_new(size_t capacity, SV **ref_out) {
+   SV *ref= sv_2mortal(newRV_noinc((SV*) newHV()));
+   sv_bless(ref, gv_stashpv("Crypt::SecretBuffer", GV_ADD));
+   secret_buffer *buf= secret_buffer_from_magic(ref, SECRET_BUFFER_MAGIC_AUTOCREATE);
+   if (capacity) secret_buffer_alloc_at_least(buf, capacity);
+   if (ref_out) *ref_out= ref;
+   return buf;
+}
+
 typedef secret_buffer  *auto_secret_buffer;
 typedef secret_buffer  *maybe_secret_buffer;
 

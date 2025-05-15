@@ -80,4 +80,12 @@ extern SV* secret_buffer_get_stringify_sv(secret_buffer *buf);
 #define SECRET_BUFFER_MAGIC_UNDEF_OK   4
 extern secret_buffer* secret_buffer_from_magic(SV *obj, int flags);
 
+/* Create a new Crypt::SecretBuffer object with a mortal ref and return the secret_buffer.
+ * If ref_out is NULL then the mortal ref remains mortal and the buffer is freed at the next
+ * FREETMPS as your function exits.  If you supply a pointer to receive ref_out, you can then
+ * increment the refcount or copy the ref if you want to keep the object.
+ * Always returns a secret_buffer, or croaks on failure.
+ */
+extern secret_buffer* secret_buffer_new(size_t capacity, SV **ref_out);
+
 #endif
