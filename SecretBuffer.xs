@@ -806,10 +806,6 @@ static bool is_page_accessible(uintptr_t addr) {
 }
 #define HAVE_IS_PAGE_ACESSIBLE
 
-static size_t get_page_size() {
-   long pagesize = sysconf(_SC_PAGESIZE);
-
-
 #elif defined(HAVE_MINCORE)
 
 #include <sys/mman.h>
@@ -819,6 +815,19 @@ static bool is_page_accessible(uintptr_t addr) {
 }
 #define HAVE_IS_PAGE_ACESSIBLE
 
+#endif
+
+#if defined(WIN32)
+static size_t get_page_size() {
+   SYSTEM_INFO sysInfo;
+   GetSystemInfo(&sysInfo);
+   return sysInfo.dwPageSize;
+}
+#else
+static size_t get_page_size() {
+   long pagesize = sysconf(_SC_PAGESIZE);
+   return (pagesize < 0)? 4096 : pagesize;
+}
 #endif
 
 #if defined(HAVE_IS_PAGE_ACESSIBLE)
@@ -846,7 +855,7 @@ static void* memmem(
 #endif /* HAVE_MEMMEM */
 
 size_t scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needle, size_t needle_len) {
-   long pagesize = sysconf(_SC_PAGESIZE);
+   size_t pagesize= get_page_size();
    unsigned char vec;
    size_t count= 0;
    void *at;
