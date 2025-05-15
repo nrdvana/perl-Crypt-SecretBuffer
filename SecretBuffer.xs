@@ -82,6 +82,60 @@ static MGVTBL secret_buffer_stringify_magic_vtbl = {
 * Implementation of SecretBuffer
 \**********************************************************************************************/
 
+/* Given a SV which you expect to be a reference to a blessed object with SecretBuffer
+ * magic, return the secret_buffer struct pointer.
+ * With no flags, this returns NULL is any of the above assumption is not correct.
+ * Specify AUTOCREATE to create a new secret_buffer (and attach with magic) if it is a blessed
+ * object and doesn't have the magic yet.
+ * Specify OR_DIE if you want an exception instead of NULL return value.
+ * Specify UNDEF_OK if you want input C<undef> to translate to C<NULL> even when OR_DIE is
+ * requested.
+ */
+secret_buffer* secret_buffer_from_magic(SV *obj, int flags) {
+   SV *sv;
+   MAGIC *magic;
+   secret_buffer *buf;
+
+   if ((!obj || !SvOK(obj)) && (flags & SECRET_BUFFER_MAGIC_UNDEF_OK))
+      return NULL;
+
+   if (!sv_isobject(obj)) {
+      if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
+         croak("Not an object");
+      return NULL;
+   }
+   sv = SvRV(obj);
+   if (SvMAGICAL(sv) && (magic = mg_findext(sv, PERL_MAGIC_ext, &secret_buffer_magic_vtbl)))
+      return (secret_buffer*) magic->mg_ptr;
+
+   if (flags & SECRET_BUFFER_MAGIC_AUTOCREATE) {
+      Newxz(buf, 1, secret_buffer);
+      magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_magic_vtbl, (const char*) buf, 0);
+#ifdef USE_ITHREADS
+      magic->mg_flags |= MGf_DUP;
+#endif
+      return buf;
+   }
+   if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
+      croak("Object lacks 'secret_buffer' magic");
+   return NULL;
+}
+
+/* Create a new Crypt::SecretBuffer object with a mortal ref and return the secret_buffer.
+ * If ref_out is NULL then the mortal ref remains mortal and the buffer is freed at the next
+ * FREETMPS as your function exits.  If you supply a pointer to receive ref_out, you can then
+ * increment the refcount or copy the ref if you want to keep the object.
+ * Always returns a secret_buffer, or croaks on failure.
+ */
+secret_buffer* secret_buffer_new(size_t capacity, SV **ref_out) {
+   SV *ref= sv_2mortal(newRV_noinc((SV*) newHV()));
+   sv_bless(ref, gv_stashpv("Crypt::SecretBuffer", GV_ADD));
+   secret_buffer *buf= secret_buffer_from_magic(ref, SECRET_BUFFER_MAGIC_AUTOCREATE);
+   if (capacity) secret_buffer_alloc_at_least(buf, capacity);
+   if (ref_out) *ref_out= ref;
+   return buf;
+}
+
 /* Reallocate (or free) the buffer of secret_buffer, fully erasing it before deallocation.
  * If capacity is zero, the buffer will be freed and 'data' pointer set to NULL.
  * Any other size will allocate exactly that number of bytes, copy any previous bytes,
@@ -625,9 +679,9 @@ size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, siz
    return bytes_written;
 }
 
-/*
- * SecretBuffer stringify magic
- */
+/**********************************************************************************************\
+* SecretBuffer stringify magic
+\**********************************************************************************************/
 
 static int
 secret_buffer_stringify_magic_get(pTHX_ SV *sv, MAGIC *mg) {
@@ -701,51 +755,11 @@ static int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
 }
 #endif
 
-#define SECRET_BUFFER_MAGIC_AUTOCREATE 1
-#define SECRET_BUFFER_MAGIC_OR_DIE     2
-#define SECRET_BUFFER_MAGIC_UNDEF_OK   4
-secret_buffer* secret_buffer_from_magic(SV *obj, int flags) {
-   SV *sv;
-   MAGIC *magic;
-   secret_buffer *buf;
-
-   if ((!obj || !SvOK(obj)) && (flags & SECRET_BUFFER_MAGIC_UNDEF_OK))
-      return NULL;
-
-   if (!sv_isobject(obj)) {
-      if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
-         croak("Not an object");
-      return NULL;
-   }
-   sv = SvRV(obj);
-   if (SvMAGICAL(sv) && (magic = mg_findext(sv, PERL_MAGIC_ext, &secret_buffer_magic_vtbl)))
-      return (secret_buffer*) magic->mg_ptr;
-
-   if (flags & SECRET_BUFFER_MAGIC_AUTOCREATE) {
-      Newxz(buf, 1, secret_buffer);
-      magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_magic_vtbl, (const char*) buf, 0);
-#ifdef USE_ITHREADS
-      magic->mg_flags |= MGf_DUP;
-#endif
-      return buf;
-   }
-   if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
-      croak("Object lacks 'secret_buffer' magic");
-   return NULL;
-}
-
-secret_buffer* secret_buffer_new(size_t capacity, SV **ref_out) {
-   SV *ref= sv_2mortal(newRV_noinc((SV*) newHV()));
-   sv_bless(ref, gv_stashpv("Crypt::SecretBuffer", GV_ADD));
-   secret_buffer *buf= secret_buffer_from_magic(ref, SECRET_BUFFER_MAGIC_AUTOCREATE);
-   if (capacity) secret_buffer_alloc_at_least(buf, capacity);
-   if (ref_out) *ref_out= ref;
-   return buf;
-}
-
+/* Aliases for typemap */
 typedef secret_buffer  *auto_secret_buffer;
 typedef secret_buffer  *maybe_secret_buffer;
 
+/* For exported constant dualvars */
 #define EXPORT_ENUM(x) newCONSTSUB(stash, #x, new_enum_dualvar(aTHX_ x, newSVpvs_share(#x)))
 static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
    SvUPGRADE(name, SVt_PVNV);
@@ -758,6 +772,9 @@ static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
 /* flag for capacity */
 #define SECRET_BUFFER_AT_LEAST 1
 
+/* Convenience to convert string parameters to the corresponding integer so that Perl-side
+ * doesn't always need to import the flag constants.
+ */
 static IV parse_flags(SV *sv) {
    if (!sv || !SvOK(sv))
       return 0;
