@@ -5,14 +5,6 @@
 
 #include "SecretBuffer.h"
 
-#include <fcntl.h>
-#include <termios.h>
-#include <unistd.h>
-
-#if HAVE_GETRANDOM
-#include <sys/random.h>
-#endif
-
 #ifdef WIN32
 #include <wincrypt.h>
 
@@ -38,6 +30,13 @@ void croak_with_windows_error(const char *prefix, DWORD err_code) {
 
 #else /* not WIN32 */
 #include <pthread.h>
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
+
+#if HAVE_GETRANDOM
+#include <sys/random.h>
 #endif
 
 /**********************************************************************************************\
@@ -269,79 +268,189 @@ size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags)
    return buf->len - orig_len;
 }
 
-size_t secret_buffer_append_tty_line(secret_buffer *buf, PerlIO *tty, int max_chars, unsigned flags) {
+size_t secret_buffer_append_textline(secret_buffer *buf, PerlIO *stream, int max_chars, unsigned flags) {
    size_t orig_len = buf->len;
+   int is_tty = 0;
+   int use_direct_io = 0;
+   int stream_fd= PerlIO_fileno(stream);
 #ifdef WIN32
-   HANDLE hConsole = GetStdHandle(STD_INPUT_HANDLE);
-   DWORD old_mode, new_mode;
-   BOOL success;
-   char ch;
-   DWORD chars_read;
+   HANDLE hConsole = INVALID_HANDLE_VALUE;
+   DWORD old_mode = 0, new_mode = 0;
 
-   if (hConsole == INVALID_HANDLE_VALUE)
-      croak("Invalid console handle");
+   // Check if stream is a console
+   if (stream_fd >= 0) {
+      hConsole = (HANDLE)_get_osfhandle(stream_fd);
+      is_tty = (hConsole != INVALID_HANDLE_VALUE && GetFileType(hConsole) == FILE_TYPE_CHAR);
+   }
 
-   /* Get current console mode */
-   if (!GetConsoleMode(hConsole, &old_mode))
-      croak_with_windows_error("Failed to get console mode", GetLastError());
+   // Check if the PerlIO layer has buffered anything
+   use_direct_io = (stream_fd >= 0 && (!PerlIO_has_cntptr(stream) || PerlIO_get_cnt(stream) <= 0));
 
-   /* Set console mode to disable echo */
-   new_mode = old_mode & ~ENABLE_ECHO_INPUT;
-   if (!SetConsoleMode(hConsole, new_mode))
-      croak_with_windows_error("Failed to set console mode", GetLastError());
-
-   /* Read characters until newline or max_chars */
-   while (max_chars != 0) {
-      /* Handle non-blocking read if requested */
-      if (flags & SECRET_BUFFER_NONBLOCK) {
-         /* Check if input is available */
-         DWORD available = 0;
-         PeekConsoleInput(hConsole, NULL, 0, &available);
-         if (available == 0) break;
+   // Disable echo if it's a console
+   if (is_tty) {
+      if (GetConsoleMode(hConsole, &old_mode)) {
+         new_mode = old_mode & ~ENABLE_ECHO_INPUT;
+         SetConsoleMode(hConsole, new_mode);
+      } else {
+         // Not a console after all, or can't get mode
+         is_tty = 0;
       }
-      success = ReadConsole(hConsole, &ch, 1, &chars_read, NULL);
-      if (!success || chars_read == 0)
-         break;
-     
-      if (ch == '\r' || ch == '\n')
-         break;
-     
-      /* Ensure buffer capacity */
+   }
+
+   // Read characters until newline or max_chars
+   while (max_chars != 0) {
+      // Handle non-blocking read if requested
+      if (flags & SECRET_BUFFER_NONBLOCK) {
+         BOOL has_data = FALSE,
+              detected = FALSE;
+         if (is_tty) {
+            // Console-specific non-blocking check
+            DWORD available = 0;
+            if (PeekConsoleInput(hConsole, NULL, 0, &available)) {
+               has_data = (available > 0);
+               detected= TRUE;
+            }
+         } else if (use_direct_io && stream_fd >= 0) {
+            // For pipes and other non-console handles on Windows
+            HANDLE hFile = (HANDLE)_get_osfhandle(stream_fd);
+            DWORD type = GetFileType(hFile);
+
+            if (type == FILE_TYPE_PIPE) {
+               // For named and anonymous pipes
+               DWORD bytes_available = 0;
+               if (PeekNamedPipe(hFile, NULL, 0, NULL, &bytes_available, NULL)) {
+                  has_data = (bytes_available > 0);
+                  detected= TRUE;
+               }
+            } else if (type != FILE_TYPE_CHAR) {
+               // For regular files and other types
+               // Use overlapped I/O to check for data availability
+               DWORD file_pointer = SetFilePointer(hFile, 0, NULL, FILE_CURRENT);
+               DWORD file_size = GetFileSize(hFile, NULL);
+               has_data = (file_pointer < file_size);
+               detected = TRUE;
+            }
+         }
+         // Fall back to PerlIO for checking data availability
+         if (!detected)
+            has_data = (PerlIO_has_cntptr(stream) && PerlIO_get_cnt(stream) > 0);
+
+         if (!has_data)
+            break;
+      }
+
+      // Ensure buffer capacity
       if (buf->capacity < buf->len + 1)
          secret_buffer_alloc_at_least(buf, buf->len + 1);
          
-      buf->data[buf->len++] = ch;
+      buf->data[buf->len++] = (char)ch;
 
+      // Read a character
+      if (use_direct_io && stream_fd >= 0) {
+         // Use direct unbuffered read
+         DWORD chars_read = 0;
+
+         if (is_tty) {
+            if (!ReadConsole(hConsole, (char*)(buf->data + buf->len), 1, &chars_read, NULL) || chars_read == 0)
+               break;
+         } else {
+            BOOL read_result = ReadFile((HANDLE)_get_osfhandle(stream_fd), (char*)(buf->data + buf->len), 1, &chars_read, NULL);
+            if (!read_result || chars_read == 0)
+               break;
+         }
+      } else {
+         // Use PerlIO (already buffered or can't use direct I/O)
+         int ch = PerlIO_getc(stream);
+         if (ch == EOF)
+            break;
+         buf->data[buf->len]= (unsigned char) ch;
+      }
+
+      if (buf->data[buf->len] == '\r' || buf->data[buf->len] == '\n')
+         break;
+      ++buf->len;
       if (max_chars > 0)
          --max_chars;
    }
 
-   /* Restore original console mode */
-   SetConsoleMode(hConsole, old_mode);
+   // Restore original console mode if we modified it
+   if (is_tty)
+      SetConsoleMode(hConsole, old_mode);
 #else
-   int tty_fd = PerlIO_fileno(tty), ch;
    struct termios old, raw;
-   
-   if (tty_fd < 0)
-      croak("Invalid file descriptor");
 
-   if (tcgetattr(tty_fd, &old) != 0)
-      croak("Failed to get terminal settings");
-   raw = old;
-   raw.c_lflag &= ~ECHO;
-   if (tcsetattr(tty_fd, TCSAFLUSH, &raw) != 0) // disable echo
-      croak("Failed to disable echo");
+   // Check if stream is a TTY
+   is_tty = (stream_fd >= 0 && isatty(stream_fd));
 
-   /* Read line using PerlIO_getc, so that we have control over buffer allocations */
-   while (max_chars != 0 && (ch = PerlIO_getc(tty)) != EOF && ch != '\n' && ch != '\r') {
+   // Check if the PerlIO layer has buffered anything
+   use_direct_io = (stream_fd >= 0 && (!PerlIO_has_cntptr(stream) || PerlIO_get_cnt(stream) <= 0));
+
+   // Disable echo if it's a TTY
+   if (is_tty) {
+      if (tcgetattr(stream_fd, &old) == 0) {
+         raw = old;
+         raw.c_lflag &= ~ECHO;
+         if (tcsetattr(stream_fd, TCSAFLUSH, &raw) != 0) {
+            // Failed to disable echo, but continue anyway
+            is_tty = 0;
+         }
+      } else {
+         // Not a TTY after all, or can't get attributes
+         is_tty = 0;
+      }
+   }
+
+   // Read characters until newline or max_chars
+   while (max_chars != 0) {
+      // Handle non-blocking read if requested
+      if (flags & SECRET_BUFFER_NONBLOCK) {
+         int has_data = 0;
+         
+         if (use_direct_io && stream_fd >= 0) {
+            // Use select() for non-blocking check with direct I/O
+            fd_set readfds;
+            struct timeval tv = {0, 0}; // Zero timeout for polling
+            
+            FD_ZERO(&readfds);
+            FD_SET(stream_fd, &readfds);
+            has_data = (select(stream_fd + 1, &readfds, NULL, NULL, &tv) > 0);
+         } else {
+            // Fall back to PerlIO for checking data availability
+            has_data = (PerlIO_has_cntptr(stream) && PerlIO_get_cnt(stream) > 0);
+         }
+
+         if (!has_data) break;
+      }
+
+      // Ensure buffer capacity
       if (buf->capacity < buf->len + 1)
          secret_buffer_alloc_at_least(buf, buf->len + 1);
-      buf->data[buf->len++] = (char)ch;
+
+      // Read a character
+      if (use_direct_io && stream_fd >= 0) {
+         // Use direct unbuffered read
+         ssize_t bytes_read = read(stream_fd, (char*)(buf->data + buf->len), 1);
+         if (bytes_read <= 0)
+            break;
+      } else {
+         // Use PerlIO (already buffered or can't use direct I/O)
+         int ch = PerlIO_getc(stream);
+         if (ch == EOF)
+            break;
+         buf->data[buf->len]= (unsigned char) ch;
+      }
+
+      if (buf->data[buf->len] == '\r' || buf->data[buf->len] == '\n')
+         break;
+
+      ++buf->len;
       if (max_chars > 0)
          --max_chars;
    }
 
-   tcsetattr(tty_fd, TCSAFLUSH, &old);  // restore echo
+   // Restore echo if we disabled it
+   if (is_tty)
+      tcsetattr(stream_fd, TCSAFLUSH, &old);
 #endif   
    return buf->len - orig_len;  // Return number of bytes read
 }
@@ -976,13 +1085,13 @@ append_random(buf, count, flags=0)
       RETVAL
 
 UV
-append_tty_line(buf, tty, max_chars= -1, flags=0)
+append_textline(buf, tty, max_chars= -1, flags=0)
    auto_secret_buffer buf
    PerlIO *tty
    IV max_chars
    UV flags
    CODE:
-      RETVAL= secret_buffer_append_tty_line(buf, tty, max_chars, flags);
+      RETVAL= secret_buffer_append_textline(buf, tty, max_chars, flags);
    OUTPUT:
       RETVAL
 
