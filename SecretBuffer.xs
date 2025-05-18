@@ -8,7 +8,7 @@
 #ifdef WIN32
 #include <wincrypt.h>
 
-void croak_with_windows_error(const char *prefix, DWORD err_code) {
+void croak_with_syserr(const char *prefix, DWORD err_code) {
    char message_buffer[512];
    DWORD length;
 
@@ -33,6 +33,9 @@ void croak_with_windows_error(const char *prefix, DWORD err_code) {
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
+
+#define croak_with_syserr(msg, err) croak("%s: %s", msg, strerror(err))
+
 #endif
 
 #if HAVE_GETRANDOM
@@ -78,7 +81,7 @@ static MGVTBL secret_buffer_stringify_magic_vtbl = {
 };
 
 /**********************************************************************************************\
-* Implementation of SecretBuffer
+* SecretBuffer C API
 \**********************************************************************************************/
 
 /* Given a SV which you expect to be a reference to a blessed object with SecretBuffer
@@ -224,12 +227,12 @@ size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags)
       HCRYPTPROV hProv;
 
       if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
-         croak_with_windows_error("CryptAcquireContext failed", GetLastError());
+         croak_with_syserr("CryptAcquireContext failed", GetLastError());
 
       if (!CryptGenRandom(hProv, sizeof(buffer), buffer)) {
          DWORD err_id= GetLastError();
          CryptReleaseContext(hProv, 0);
-         croak_with_windows_error("CryptGenRandom failed", err_id);
+         croak_with_syserr("CryptGenRandom failed", err_id);
       }
 
       CryptReleaseContext(hProv, 0);
@@ -268,195 +271,187 @@ size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags)
    return buf->len - orig_len;
 }
 
-size_t secret_buffer_append_textline(secret_buffer *buf, PerlIO *stream, int max_chars, unsigned flags) {
-   size_t orig_len = buf->len;
-   int is_tty = 0;
-   int use_direct_io = 0;
-   int stream_fd= PerlIO_fileno(stream);
-#ifdef WIN32
-   HANDLE hConsole = INVALID_HANDLE_VALUE;
-   DWORD old_mode = 0, new_mode = 0;
-
-   // Check if stream is a console
-   if (stream_fd >= 0) {
-      hConsole = (HANDLE)_get_osfhandle(stream_fd);
-      is_tty = (hConsole != INVALID_HANDLE_VALUE && GetFileType(hConsole) == FILE_TYPE_CHAR);
+/* This *only* reads from existing data in the PerlIO buffer, and also wipes those bytes */
+static size_t read_perlio_sanitized(PerlIO *stream, char *buffer, size_t count) {
+   size_t avail= PerlIO_get_cnt(stream);
+   char *avail_buf= avail? PerlIO_get_ptr(stream) : NULL;
+   /* Limit read-size to what is already in the buffer */
+   if (count > avail)
+      count= avail;
+   if (count) {
+      memcpy(buffer, avail_buf, count);
+      secret_buffer_wipe(avail_buf, count);
+      PerlIO_set_ptrcnt(stream, avail_buf+count, avail-count);
    }
-
-   // Check if the PerlIO layer has buffered anything
-   use_direct_io = (stream_fd >= 0 && (!PerlIO_has_cntptr(stream) || PerlIO_get_cnt(stream) <= 0));
-
-   // Disable echo if it's a console
-   if (is_tty) {
-      if (GetConsoleMode(hConsole, &old_mode)) {
-         new_mode = old_mode & ~ENABLE_ECHO_INPUT;
-         SetConsoleMode(hConsole, new_mode);
-      } else {
-         // Not a console after all, or can't get mode
-         is_tty = 0;
-      }
-   }
-
-   // Read characters until newline or max_chars
-   while (max_chars != 0) {
-      // Handle non-blocking read if requested
-      if (flags & SECRET_BUFFER_NONBLOCK) {
-         BOOL has_data = FALSE,
-              detected = FALSE;
-         if (is_tty) {
-            // Console-specific non-blocking check
-            DWORD available = 0;
-            if (PeekConsoleInput(hConsole, NULL, 0, &available)) {
-               has_data = (available > 0);
-               detected= TRUE;
-            }
-         } else if (use_direct_io && stream_fd >= 0) {
-            // For pipes and other non-console handles on Windows
-            HANDLE hFile = (HANDLE)_get_osfhandle(stream_fd);
-            DWORD type = GetFileType(hFile);
-
-            if (type == FILE_TYPE_PIPE) {
-               // For named and anonymous pipes
-               DWORD bytes_available = 0;
-               if (PeekNamedPipe(hFile, NULL, 0, NULL, &bytes_available, NULL)) {
-                  has_data = (bytes_available > 0);
-                  detected= TRUE;
-               }
-            } else if (type != FILE_TYPE_CHAR) {
-               // For regular files and other types
-               // Use overlapped I/O to check for data availability
-               DWORD file_pointer = SetFilePointer(hFile, 0, NULL, FILE_CURRENT);
-               DWORD file_size = GetFileSize(hFile, NULL);
-               has_data = (file_pointer < file_size);
-               detected = TRUE;
-            }
-         }
-         // Fall back to PerlIO for checking data availability
-         if (!detected)
-            has_data = (PerlIO_has_cntptr(stream) && PerlIO_get_cnt(stream) > 0);
-
-         if (!has_data)
-            break;
-      }
-
-      // Ensure buffer capacity
-      if (buf->capacity < buf->len + 1)
-         secret_buffer_alloc_at_least(buf, buf->len + 1);
-         
-      buf->data[buf->len++] = (char)ch;
-
-      // Read a character
-      if (use_direct_io && stream_fd >= 0) {
-         // Use direct unbuffered read
-         DWORD chars_read = 0;
-
-         if (is_tty) {
-            if (!ReadConsole(hConsole, (char*)(buf->data + buf->len), 1, &chars_read, NULL) || chars_read == 0)
-               break;
-         } else {
-            BOOL read_result = ReadFile((HANDLE)_get_osfhandle(stream_fd), (char*)(buf->data + buf->len), 1, &chars_read, NULL);
-            if (!read_result || chars_read == 0)
-               break;
-         }
-      } else {
-         // Use PerlIO (already buffered or can't use direct I/O)
-         int ch = PerlIO_getc(stream);
-         if (ch == EOF)
-            break;
-         buf->data[buf->len]= (unsigned char) ch;
-      }
-
-      if (buf->data[buf->len] == '\r' || buf->data[buf->len] == '\n')
-         break;
-      ++buf->len;
-      if (max_chars > 0)
-         --max_chars;
-   }
-
-   // Restore original console mode if we modified it
-   if (is_tty)
-      SetConsoleMode(hConsole, old_mode);
-#else
-   struct termios old, raw;
-
-   // Check if stream is a TTY
-   is_tty = (stream_fd >= 0 && isatty(stream_fd));
-
-   // Check if the PerlIO layer has buffered anything
-   use_direct_io = (stream_fd >= 0 && (!PerlIO_has_cntptr(stream) || PerlIO_get_cnt(stream) <= 0));
-
-   // Disable echo if it's a TTY
-   if (is_tty) {
-      if (tcgetattr(stream_fd, &old) == 0) {
-         raw = old;
-         raw.c_lflag &= ~ECHO;
-         if (tcsetattr(stream_fd, TCSAFLUSH, &raw) != 0) {
-            // Failed to disable echo, but continue anyway
-            is_tty = 0;
-         }
-      } else {
-         // Not a TTY after all, or can't get attributes
-         is_tty = 0;
-      }
-   }
-
-   // Read characters until newline or max_chars
-   while (max_chars != 0) {
-      // Handle non-blocking read if requested
-      if (flags & SECRET_BUFFER_NONBLOCK) {
-         int has_data = 0;
-         
-         if (use_direct_io && stream_fd >= 0) {
-            // Use select() for non-blocking check with direct I/O
-            fd_set readfds;
-            struct timeval tv = {0, 0}; // Zero timeout for polling
-            
-            FD_ZERO(&readfds);
-            FD_SET(stream_fd, &readfds);
-            has_data = (select(stream_fd + 1, &readfds, NULL, NULL, &tv) > 0);
-         } else {
-            // Fall back to PerlIO for checking data availability
-            has_data = (PerlIO_has_cntptr(stream) && PerlIO_get_cnt(stream) > 0);
-         }
-
-         if (!has_data) break;
-      }
-
-      // Ensure buffer capacity
-      if (buf->capacity < buf->len + 1)
-         secret_buffer_alloc_at_least(buf, buf->len + 1);
-
-      // Read a character
-      if (use_direct_io && stream_fd >= 0) {
-         // Use direct unbuffered read
-         ssize_t bytes_read = read(stream_fd, (char*)(buf->data + buf->len), 1);
-         if (bytes_read <= 0)
-            break;
-      } else {
-         // Use PerlIO (already buffered or can't use direct I/O)
-         int ch = PerlIO_getc(stream);
-         if (ch == EOF)
-            break;
-         buf->data[buf->len]= (unsigned char) ch;
-      }
-
-      if (buf->data[buf->len] == '\r' || buf->data[buf->len] == '\n')
-         break;
-
-      ++buf->len;
-      if (max_chars > 0)
-         --max_chars;
-   }
-
-   // Restore echo if we disabled it
-   if (is_tty)
-      tcsetattr(stream_fd, TCSAFLUSH, &old);
-#endif   
-   return buf->len - orig_len;  // Return number of bytes read
+   return count;
 }
 
-size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_t count, unsigned flags) {
+#ifdef WIN32
+typedef DWORD console_state;
+typedef DWORD sys_error_type;
+
+static bool disable_console_echo(int fd, console_state *prev_state) {\
+   DWORD new_mode= 0;
+   HANDLE hConsole= fd >= 0? (HANDLE)_get_osfhandle(stream_fd) : INVALID_HANDLE_VALUE;
+   if (hConsole == INVALID_HANDLE_VALUE || GetFileType(hConsole) != FILE_TYPE_CHAR)
+      return false;
+   // Capture current state
+   if (!GetConsoleMode(hConsole, prev_state))
+      return false;
+   new_mode = *prev_state & ~ENABLE_ECHO_INPUT;
+   return SetConsoleMode(hConsole, new_mode);
+}
+static bool restore_console_state(HANDLE hConsole, console_state *prev_state) {
+   return SetConsoleMode(hConsole, *prev_state);
+}
+
+static int read_sanitized(PerlIO *stream, char *buffer, size_t count, bool nonblock,
+   sys_error_type *err_code, const char **what_failed
+) {
+   /* If the Perl file handle is not a real system handle, or if PerlIO has buffered anything,
+    * we have to use perl's buffer instead of direct from the OS.
+    * This function assumes the buffer has already been enlarged to append 'count' bytes.
+    */
+   int stream_fd= PerlIO_fileno(stream);
+   HANDLE hFile = stream_fd >= 0? (HANDLE)_get_osfhandle(PerlIO_fileno(fh)) : INVALID_HANDLE_VALUE;
+   if (hFile != INVALID_HANDLE_VALUE && (!PerlIO_has_cntptr(stream) || PerlIO_get_cnt(stream) <= 0)) {
+      /* Real handle and no buffered input; we can read direct from the OS */
+      /* Use overlapped I/O for non-blocking operation if requested */
+      if (flags & SECRET_BUFFER_NONBLOCK) {
+         DWORD bytes_read;
+         OVERLAPPED overlapped = {0};
+         overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+         if (!overlapped.hEvent) {
+            *err_code= GetLastError();
+            *what_failed= "CreateEvent";
+            return -1;
+         }
+         success = ReadFile(hFile, buffer, (DWORD)count, NULL, &overlapped);
+         if (!success) {
+            error_code = GetLastError();
+            if (error_code == ERROR_IO_PENDING) {
+               /* Nothing available without blocking */
+               CancelIo(hFile);
+               bytes_read= 0;
+            } else {
+               CloseHandle(overlapped.hEvent);
+               *err_code= error_code;
+               *what_failed= "ReadFile";
+               return -1;
+            }
+         }
+         else {
+            if (!GetOverlappedResult(hFile, &overlapped, &bytes_read, TRUE)) {
+               *err_code= GetLastError();
+               *what_failed= "GetOverlappedResult";
+               CloseHandle(overlapped.hEvent);
+               return -1;
+            }
+         }
+         CloseHandle(overlapped.hEvent);
+      } else {
+         /* Blocking read */
+         if (!ReadFile(hFile, buffer, (DWORD)count, &bytes_read, NULL)) {
+            *err_code= GetLastError();
+            *what_failed= "ReadFile";
+            return -1;
+         }
+      }
+      return bytes_read;
+   }
+   else
+      read_perlio_sanitized(stream, buffer, count);
+}
+
+#else /* POSIX? */
+
+typedef struct termios console_state;
+typedef int sys_error_type;
+
+static bool disable_console_echo(int fd, console_state *prev_state) {
+   struct termios new_state;
+   // Check if stream is a TTY
+   if (fd < 0 || !isatty(fd))
+      return false;
+   if (tcgetattr(fd, prev_state) != 0)
+      return false;
+   new_state= *prev_state;
+   new_state.c_lflag &= ~ECHO;
+   return tcsetattr(fd, TCSAFLUSH, &new_state) == 0;
+}
+
+static bool restore_console_state(int fd, console_state *prev_state) {
+   return tcsetattr(fd, TCSAFLUSH, prev_state) == 0;
+}
+
+static int read_sanitized(PerlIO *stream, char *buffer, size_t count, bool nonblock,
+   sys_error_type *err_code, const char **what_failed
+) {
+   /* If the Perl file handle is not a real system handle, or if PerlIO has buffered anything,
+    * we have to use perl's buffer instead of direct from the OS.
+    * This function assumes the buffer has already been enlarged to append 'count' bytes.
+    */
+   int stream_fd= PerlIO_fileno(stream);
+   if (stream_fd >= 0 && (!PerlIO_has_cntptr(stream) || PerlIO_get_cnt(stream) <= 0)) {
+      /* Use recv so we can perform a nonblocking read without altering the fd state */
+      ssize_t got = recv(stream_fd, buffer, count, nonblock? MSG_DONTWAIT : 0);
+      if (got > 0)
+         return got;
+      else if (got == 0 || ((errno == EAGAIN || errno == EWOULDBLOCK) && nonblock))
+         return 0;
+      else {
+         *err_code= errno;
+         *what_failed= "recv";
+      }
+   }
+   else
+      read_perlio_sanitized(stream, buffer, count);
+}
+
+#endif /* POSIX */
+
+size_t secret_buffer_append_textline(secret_buffer *buf, PerlIO *stream, int max_chars, unsigned flags) {
+   /* Return how much we append to the buffer, so record original length */
    size_t orig_len = buf->len;
+   /* PerlIO may or may not be backed by a real OS file descriptor */
+   int stream_fd= PerlIO_fileno(stream);
+   /* Disable echo, if possible */
+   console_state prev_state;
+   bool console_changed= disable_console_echo(stream_fd, &prev_state);
+   /* Read one character at a time, because once we find "\n" the rest needs to stay in the OS buffer.
+    * This is inefficient, but passwords are relatively short so it hardly matters.
+    */
+   while (max_chars != 0) {
+      int got;
+      const char *what_failed= NULL;
+      sys_error_type err_code= 0;
+      /* Ensure buffer capacity */
+      if (buf->capacity < buf->len + 1)
+         secret_buffer_alloc_at_least(buf, buf->len + 1);
+      got= read_sanitized(stream, buf->data + buf->len, 1, (flags & SECRET_BUFFER_NONBLOCK),
+         &err_code, &what_failed);
+      if (got < 0)
+         croak_with_syserr(what_failed, err_code);
+      if (got == 0)
+         break;
+      if (buf->data[buf->len] == '\r' || buf->data[buf->len] == '\n')
+         break;
+      ++buf->len;
+      if (max_chars > 0)
+         --max_chars;
+   }
+   /* Restore echo if we disabled it */
+   if (console_changed)
+      restore_console_state(stream_fd, &prev_state);
+   /* Return number of bytes appended */
+   return buf->len - orig_len;
+}
+
+size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *stream, size_t count, unsigned flags) {
+   size_t orig_len = buf->len;
+   sys_error_type err_code= 0;
+   const char *what_failed= NULL;
+   int got;
 
    if (!count)
       return 0;
@@ -464,88 +459,16 @@ size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_t count
    if (buf->capacity < buf->len + count)
       secret_buffer_alloc_at_least(buf, buf->len + count);
 
-#ifdef WIN32
-   {
-      HANDLE hFile = (HANDLE)_get_osfhandle(PerlIO_fileno(fh));
-      DWORD bytes_read, error_code;
-      BOOL success;
-    
-      if (hFile == INVALID_HANDLE_VALUE)
-         croak("Invalid file handle");
-    
-      /* Use overlapped I/O for non-blocking operation if requested */
-      if (flags & SECRET_BUFFER_NONBLOCK) {
-         OVERLAPPED overlapped = {0};
-         overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-        
-         if (!overlapped.hEvent)
-            croak_with_windows_error("Failed to create event for overlapped I/O", GetLastError());
-        
-         success = ReadFile(hFile, buf->data + buf->len, (DWORD)count, NULL, &overlapped);
-        
-         if (!success) {
-            error_code = GetLastError();
-            if (error_code == ERROR_IO_PENDING) {
-               /* I/O is pending, check if we want to wait */
-               if (flags & SECRET_BUFFER_FULLCOUNT) {
-                  if (WaitForSingleObject(overlapped.hEvent, INFINITE) == WAIT_OBJECT_0) {
-                     GetOverlappedResult(hFile, &overlapped, &bytes_read, TRUE);
-                     buf->len += bytes_read;
-                  }
-               } else {
-                  /* Just return what we have so far */
-                  CancelIo(hFile);
-               }
-            } else {
-               CloseHandle(overlapped.hEvent);
-               croak_with_windows_error("Failed to read from file", error_code);
-            }
-         } else {
-            GetOverlappedResult(hFile, &overlapped, &bytes_read, TRUE);
-            buf->len += bytes_read;
-         }
-        
-         CloseHandle(overlapped.hEvent);
-      } else {
-         /* Blocking read */
-         success = ReadFile(hFile, buf->data + buf->len, (DWORD)count, &bytes_read, NULL);
-        
-         if (!success)
-            croak("Failed to read from file: %lu", GetLastError());
-        
-         buf->len += bytes_read;
-      }
-   } /* win32 */
-#else
-   { /* posix */
-      int fd = PerlIO_fileno(fh);
-      ssize_t got;
-      char *dest= buf->data + buf->len;
-      /* Use recv so we can perform a nonblocking read without altering the fd state */
-      while (count > 0) {
-         got = recv(fd, dest, count, 
-                    (flags & SECRET_BUFFER_NONBLOCK) ? MSG_DONTWAIT : 0);
-         
-         if (got > 0) {
-            dest += got;
-            buf->len += got;
-            count -= got;
-         } 
-         else if (got == 0
-            || ((errno == EAGAIN || errno == EWOULDBLOCK) && (flags & SECRET_BUFFER_NONBLOCK))
-         ) {
-            /* End of file, or end of available bytes in nonblocking mode */
-            break;
-         }
-         else
-            croak("Failed to read from file: %s", strerror(errno));
-         
-         /* If not in FULLCOUNT mode, exit after first read attempt */
-         if (!(flags & SECRET_BUFFER_FULLCOUNT))
-            break;
-      }
-   } /* posix */
-#endif
+   do {
+      int got= read_sanitized(stream, buf->data + buf->len, 1, (flags & SECRET_BUFFER_NONBLOCK),
+            &err_code, &what_failed);
+      if (got < 0)
+         croak_with_syserr(what_failed, err_code);
+      if (got == 0)
+         break;
+      buf->len += got;
+      count -= got;
+   }  while (count > 0 && (flags & SECRET_BUFFER_FULLCOUNT));
    return buf->len - orig_len;  // Return number of bytes read
 }
 
@@ -652,7 +575,7 @@ size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, siz
          overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
         
          if (!overlapped.hEvent)
-            croak_with_windows_error("Failed to create event for overlapped I/O", GetLastError());
+            croak_with_syserr("Failed to create event for overlapped I/O", GetLastError());
 
          success = WriteFile(hFile, buf->data + offset, (DWORD)count, NULL, &overlapped);
          if (!success && GetLastError() == ERROR_IO_PENDING)
@@ -691,7 +614,7 @@ size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, siz
             DUPLICATE_SAME_ACCESS)
          ) {
             free(params);
-            croak_with_windows_error("Failed to duplicate handle for thread", GetLastError());
+            croak_with_syserr("Failed to duplicate handle for thread", GetLastError());
          }
 
          /* Copy the part of the buffer we need to write */
@@ -711,7 +634,7 @@ size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, siz
             CloseHandle(params->hFile);
             secret_buffer_wipe(params->bytes, params->count);
             free(params);
-            croak_with_windows_error("Failed to create thread", GetLastError());
+            croak_with_syserr("Failed to create thread", GetLastError());
          }
 
          /* We don't need to wait for the thread, so just close the handle */
