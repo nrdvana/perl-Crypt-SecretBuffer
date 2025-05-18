@@ -151,16 +151,20 @@ if the call returns fewer than the requested bytes.
 B<Win32 Note:> On Windows, the flags are irrelevant because it always returns the requested
 number of bytes and never blocks.
 
-=method append_tty_line
+=method append_textline
 
-  $byte_count= $buf->append_tty_line(STDIN);
-  $byte_count= $buf->append_tty_line(STDIN, $max_chars);
+  $byte_count= $buf->append_textline(STDIN);
+  $byte_count= $buf->append_textline(STDIN, $max_chars);
+  $byte_count= $buf->append_textline(STDIN, $max_chars, NONBLOCK);
 
-This turns off TTY echo, reads and appends characters until newline or EOF (and does not store
-the \r or \n characters) and returns the number of characters added.
+This turns off TTY echo (if the handle is a Unix TTY or Windows Console), reads and appends
+characters until newline or EOF (and does not store the \r or \n characters) and returns the
+number of characters added.  When possible, this reads directly from the OS to avoid buffering
+the secret in libc or Perl, but reads from the buffer if you already have input data in one of
+those buffers, or if the file handle is a virtual Perl handle not backed by the OS.
 
-B<Win32 Note:> On Windows, this always reads from the Console, and the first parameter is
-ignored.
+This function supports the NONBLOCK flag, to return immediately if there isn't a complete line
+of text available on the file handle.
 
 =method append_sysread
 
@@ -171,7 +175,12 @@ ignored.
 This performs a low-level read from the file handle and appends the bytes to the buffer.
 It must be a real file handle with an underlying file descriptor number (C<fileno>).
 Note that on most unixes, C<NONBLOCK> does not apply to disk files, only to pipes, sockets, etc.
-C<FULLCOUNT> is used to loop on a short blocking read until the desired C<$count>.
+If you specify the C<FULLCOUNT> flag and the sysread returns less than C<$count>, it will loop
+until the full count is reached or until EOF.  FULLCOUNT cannot be combined with NONBLOCK.
+
+When possible, this reads directly from the OS to avoid buffering the secret in libc or Perl,
+but reads from the buffer if you already have input data in one of those buffers, or if the
+file handle is a virtual Perl handle not backed by the OS.
 
 =method syswrite
 
@@ -191,7 +200,9 @@ count is written, or an error occurs.
 If you specify the flag C<NONBLOCK>, it makes one nonblocking attempt to write the buffer.
 If you specify both flags, it makes one nonblocking attempt and then if the complete data was
 not written it creates a background thread/process to continue blocking writes into that file
-handle until an error occurs or the full count is written.
+handle until an error occurs or the full count is written.  This thread gets a copy of the
+secret and the secret remains in memory until the thread exits, but you may free C<$buf>
+whenever you want.
 
 =method as_pipe
 
