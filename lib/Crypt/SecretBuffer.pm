@@ -128,6 +128,15 @@ and the bytes are initialized with L</append_random>.
 
 Erases the buffer.  Equivalent to C<< $buf->length(0) >>
 
+=method substr
+
+  $buf->substr(1);            # New SecretBuffer minus the first character
+  $buf->substr(0,5);          # First 5 characters of buffer
+  $buf->substr(0,5,$buf2);    # replace first 5 characters with content of $buf2
+
+This is exactly like Perl's C<substr> function, but it returns C<Crypt::SecretBuffer> objects
+and they are not an lvalue that alters the original.
+
 =method append_random
 
   $byte_count= $buf->append_random($n_bytes);

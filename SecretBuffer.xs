@@ -997,6 +997,81 @@ clear(buf)
       secret_buffer_realloc(buf, 0);
       XSRETURN(1);
 
+void
+substr(buf, ofs, count_sv=NULL, replacement=NULL)
+   auto_secret_buffer buf
+   IV ofs
+   SV *count_sv
+   SV *replacement
+   INIT:
+      unsigned char *sub_start, *sub_limit;
+      secret_buffer *sub_buf= NULL;
+      SV *sub_ref= NULL;
+      IV count= count_sv? SvIV(count_sv) : buf->len;
+   PPCODE:
+      /* normalize negative offset, and clamp to valid range */
+      if (ofs < 0)
+         ofs= buf->len + ofs;
+      if (ofs < 0)
+         ofs= 0;
+      else if (ofs > buf->len)
+         ofs= buf->len;
+      /* normalize negative count, and clamp to valid range */
+      if (count < 0) {
+         count= buf->len + count - ofs;
+         if (count < 0)
+            count= 0;
+      }
+      if (ofs + count > buf->len)
+         count= buf->len - ofs;
+      sub_start= buf->data + ofs;
+      /* If called in non-void context, construct new secret from this range */
+      if (GIMME_V != G_VOID) {
+         SV **el;
+         sub_buf= secret_buffer_new(count, &sub_ref);
+         if (count) {
+            Copy(sub_start, sub_buf->data, count, unsigned char);
+            sub_buf->len= count;
+         }
+         /* inherit the stringify_mask */
+         el= hv_fetchs((HV*) SvRV(ST(0)), "stringify_mask", 0);
+         if (el && *el)
+            /* we know the hv isn't tied because we just created it, so no need to check success */
+            hv_stores((HV*) SvRV(sub_ref), "stringify_mask", newSVsv(*el));
+      }
+      /* modifying string? */
+      if (replacement) {
+         IV tail_len= buf->len - (ofs + count);
+         IV len_diff;
+         const unsigned char *repl_src;
+         STRLEN repl_len;
+
+         /* Debatable whether I should allow plain SVs here, or force the user to wrap the data
+          * in a secreyt_buffer first... */
+         if (SvPOK(replacement)) {
+            repl_src= (const unsigned char*) SvPV(replacement, repl_len);
+         } else {
+            secret_buffer *peer= secret_buffer_from_magic(replacement, SECRET_BUFFER_MAGIC_OR_DIE);
+            repl_src= peer->data;
+            repl_len= peer->len;
+         }
+         len_diff= repl_len - count;
+         if (len_diff > 0) /* buffer is growing */
+            secret_buffer_alloc_at_least(buf, buf->len + len_diff);
+         /* copy anything beyond the insertion point to its new location */
+         if (tail_len)
+            Move(sub_start + count, sub_start + repl_len, tail_len, unsigned char);
+         Copy(repl_src, sub_start, repl_len, unsigned char);
+         buf->len += len_diff;
+      }
+      /* If void context, return nothing.  Else return the substr */
+      if (!sub_ref)
+         XSRETURN(0);
+      else {
+         ST(0)= sub_ref; /* already mortal */
+         XSRETURN(1);
+      }
+
 UV
 append_random(buf, count, flags=0)
    auto_secret_buffer buf
