@@ -46,6 +46,9 @@ extern void secret_buffer_realloc(secret_buffer *buf, size_t new_capacity);
  */
 extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity);
 
+#define SECRET_BUFFER_EOF         0
+#define SECRET_BUFFER_INCOMPLETE -1
+
 /* Append N bytes of cryptographic quality random bytes to the end of the buffer.
  * This may block if your entropy pool is low.
  * If you request the flag 'NONBLOCK' it performs a non-blocking read.
@@ -53,27 +56,33 @@ extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity
  * desired count.  Note that only some systems block on lack of entropy in the first place;
  * the flags are not relevant on WIndows.
  */
-extern size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags);
+extern IV secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags);
 
-/* Append one line of text from a stream, stopping at the first newline character (which is not
- * appended to the buffer).  If the stream is a TTY or Windows Console, this also disables echo
- * while reading.  This function attempts to avoid using buffered IO, but if you already loaded
- * some of your stream into a buffer (using perl's getline etc), it uses the buffer and you lose
- * the guarantee that the buffer will get cleared.
- * If max_chars is non-negative, this will stop after reading that many characters (bytes)
- * before the end of line is seen.  This is useful for things like prompting a user for an exact
- * number of digits without making them hit 'Enter'.
- * This supports the SECRET_BUFFER_NONBLOCK flag, though that isn't actually useful for a TTY
- * since echo would get turned back on as soon as the function exits.
- */
-extern size_t secret_buffer_append_textline(secret_buffer *buf, PerlIO *fh, int max_chars, unsigned flags);
-
-/* Append 'count' bytes from a file handle, skipping application buffering.
+/* Append 'count' bytes from a file handle, while attempting to skip application buffering.
  * This can be useful when you want to read from a sensitive file without loading it
- * generically into perl scalars.
- * This supports the FULLCOUNT and NONBLOCK flags.
+ * generically into perl scalars.  This supports the FULLCOUNT and NONBLOCK flags, but not
+ * both at the same time.
+ * The return value is:
+ *   * Number of characters added
+ *   * SECRET_BUFFER_EOF (0) if EOF encountered
+ *   * SECRET_BUFFER_INCOMPLETE (-1) - Temporary error like EAGAIN or EINTR
+ *   * croaks on any fatal OS error
+ * (this is wrapping the differences between POSIX and Win32, so errno isn't portable)
  */
-extern size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_t count, unsigned flags);
+extern IV secret_buffer_append_read(secret_buffer *buf, PerlIO *fh, size_t count, unsigned flags);
+
+/* Append one line of text from a stream, stopping at the first CR or LF (or both).
+ * The line terminator is not appended to the buffer.
+ * If the stream is a TTY or Windows Console, this also disables echo while reading.
+ *
+ * The return value is:
+ *   * SECRET_BUFFER_GOTLINE (1) - Received a line (and line terminator)
+ *   * SECRET_BUFFER_EOF (0)     - Encountered EOF (even if partial line)
+ *   * SECRET_BUFFER_INCOMPLETE  - Temporary error like EAGAIN or EINTR (even if partial line)
+ *   * croaks on any fatal OS error
+ */
+#define SECRET_BUFFER_GOTLINE 1
+extern int secret_buffer_append_getline(secret_buffer *buf, PerlIO *fh);
 
 /* Write a segment of this buffer into the supplied file handle.
  * If SECRET_BUFFER_NONBLOCK flag is requested, this writes only as much as one syscall can fit
@@ -84,7 +93,7 @@ extern size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_
  * full count, then this forks off a thread to continue pumping data into the pipe.
  * On Win32, you get a thread instead of a fork().
  */
-extern size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count, unsigned flags);
+extern IV secret_buffer_write(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count, unsigned flags);
 
 /* Return a magical SV which exposes the secret buffer.
  * This should be used sparingly, if at all, for interoperating with perl code that isn't

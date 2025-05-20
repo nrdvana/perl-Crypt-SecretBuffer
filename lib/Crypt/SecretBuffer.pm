@@ -151,26 +151,25 @@ if the call returns fewer than the requested bytes.
 B<Win32 Note:> On Windows, the flags are irrelevant because it always returns the requested
 number of bytes and never blocks.
 
-=method append_textline
+=method append_getline
 
-  $byte_count= $buf->append_textline(STDIN);
-  $byte_count= $buf->append_textline(STDIN, $max_chars);
-  $byte_count= $buf->append_textline(STDIN, $max_chars, NONBLOCK);
+  $bool= $buf->append_getline(STDIN);
 
 This turns off TTY echo (if the handle is a Unix TTY or Windows Console), reads and appends
-characters until newline or EOF (and does not store the \r or \n characters) and returns the
-number of characters added.  When possible, this reads directly from the OS to avoid buffering
-the secret in libc or Perl, but reads from the buffer if you already have input data in one of
-those buffers, or if the file handle is a virtual Perl handle not backed by the OS.
+characters until newline or EOF (and does not store the \r or \n characters).
+It returns true if the read "completed" with a line terminator, or false on EOF, or
+C<undef> on a temporary error like EAGAIN or EINTR.  Any other read error throws an exception.
+Characters may be added to the buffer even when it returns false.
 
-This function supports the NONBLOCK flag, to return immediately if there isn't a complete line
-of text available on the file handle.
+When possible, this reads directly from the OS to avoid buffering the secret in libc or Perl,
+but reads from the buffer if you already have input data in one of those buffers, or if the
+file handle is a virtual Perl handle not backed by the OS.
 
-=method append_sysread
+=method append_read
 
-  $byte_count= $buf->append_sysread($fh, $count);
-  $byte_count= $buf->append_sysread($fh, $count, NONBLOCK);
-  $byte_count= $buf->append_sysread($fh, $count, FULLCOUNT);
+  $byte_count= $buf->append_read($fh, $count);
+  $byte_count= $buf->append_read($fh, $count, NONBLOCK);
+  $byte_count= $buf->append_read($fh, $count, FULLCOUNT);
 
 This performs a low-level read from the file handle and appends the bytes to the buffer.
 It must be a real file handle with an underlying file descriptor number (C<fileno>).

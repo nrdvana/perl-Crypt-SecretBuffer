@@ -70,7 +70,7 @@ static int secret_buffer_stringify_magic_set(pTHX_ SV *sv, MAGIC *mg);
 static int secret_buffer_stringify_magic_free(pTHX_ SV *sv, MAGIC *mg);
 static MGVTBL secret_buffer_stringify_magic_vtbl = {
    secret_buffer_stringify_magic_get,
-   secret_buffer_stringify_magic_get,
+   secret_buffer_stringify_magic_set,
    NULL, NULL,
    secret_buffer_stringify_magic_free,
    NULL,
@@ -212,7 +212,7 @@ void secret_buffer_wipe(char *buf, size_t len) {
 #endif
 }
 
-size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags) {
+IV secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags) {
    size_t orig_len= buf->len;
    char *dest;
 
@@ -268,7 +268,7 @@ size_t secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags)
       close(fd);
    }
 #endif
-   return buf->len - orig_len;
+   return (IV)(buf->len - orig_len);
 }
 
 /* This *only* reads from existing data in the PerlIO buffer, and also wipes those bytes */
@@ -292,7 +292,7 @@ typedef DWORD sys_error_type;
 
 static bool disable_console_echo(int fd, console_state *prev_state) {\
    DWORD new_mode= 0;
-   HANDLE hConsole= fd >= 0? (HANDLE)_get_osfhandle(stream_fd) : INVALID_HANDLE_VALUE;
+   HANDLE hConsole= fd >= 0? (HANDLE)_get_osfhandle(fd) : INVALID_HANDLE_VALUE;
    if (hConsole == INVALID_HANDLE_VALUE || GetFileType(hConsole) != FILE_TYPE_CHAR)
       return false;
    // Capture current state
@@ -319,12 +319,13 @@ static int read_sanitized(PerlIO *stream, char *buffer, size_t count, bool nonbl
       /* Use overlapped I/O for non-blocking operation if requested */
       if (flags & SECRET_BUFFER_NONBLOCK) {
          DWORD bytes_read;
+         int ret;
          OVERLAPPED overlapped = {0};
          overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
          if (!overlapped.hEvent) {
             *err_code= GetLastError();
             *what_failed= "CreateEvent";
-            return -1;
+            return -2;
          }
          success = ReadFile(hFile, buffer, (DWORD)count, NULL, &overlapped);
          if (!success) {
@@ -332,32 +333,33 @@ static int read_sanitized(PerlIO *stream, char *buffer, size_t count, bool nonbl
             if (error_code == ERROR_IO_PENDING) {
                /* Nothing available without blocking */
                CancelIo(hFile);
-               bytes_read= 0;
+               ret= -1;
             } else {
-               CloseHandle(overlapped.hEvent);
                *err_code= error_code;
                *what_failed= "ReadFile";
-               return -1;
+               ret= -2;
             }
          }
          else {
-            if (!GetOverlappedResult(hFile, &overlapped, &bytes_read, TRUE)) {
+            if (GetOverlappedResult(hFile, &overlapped, &bytes_read, TRUE)) {
+               ret= bytes_read;
+            } else {
                *err_code= GetLastError();
                *what_failed= "GetOverlappedResult";
-               CloseHandle(overlapped.hEvent);
-               return -1;
+               ret= -2;
             }
          }
          CloseHandle(overlapped.hEvent);
+         return ret;
       } else {
          /* Blocking read */
          if (!ReadFile(hFile, buffer, (DWORD)count, &bytes_read, NULL)) {
             *err_code= GetLastError();
             *what_failed= "ReadFile";
-            return -1;
+            return -2;
          }
+         return bytes_read;
       }
-      return bytes_read;
    }
    else
       read_perlio_sanitized(stream, buffer, count);
@@ -377,10 +379,12 @@ static bool disable_console_echo(int fd, console_state *prev_state) {
       return false;
    new_state= *prev_state;
    new_state.c_lflag &= ~ECHO;
+   //warn("# set console state to %X", new_state.c_lflag);
    return tcsetattr(fd, TCSAFLUSH, &new_state) == 0;
 }
 
 static bool restore_console_state(int fd, console_state *prev_state) {
+   //warn("# restore console state to %X", prev_state->c_lflag);
    return tcsetattr(fd, TCSAFLUSH, prev_state) == 0;
 }
 
@@ -391,63 +395,57 @@ static int read_sanitized(PerlIO *stream, char *buffer, size_t count, bool nonbl
     * we have to use perl's buffer instead of direct from the OS.
     * This function assumes the buffer has already been enlarged to append 'count' bytes.
     */
+   int got, fd_flags= 0;
    int stream_fd= PerlIO_fileno(stream);
    if (stream_fd >= 0 && (!PerlIO_has_cntptr(stream) || PerlIO_get_cnt(stream) <= 0)) {
-      /* Use recv so we can perform a nonblocking read without altering the fd state */
-      ssize_t got = recv(stream_fd, buffer, count, nonblock? MSG_DONTWAIT : 0);
-      if (got > 0)
-         return got;
-      else if (got == 0 || ((errno == EAGAIN || errno == EWOULDBLOCK) && nonblock))
-         return 0;
-      else {
-         *err_code= errno;
-         *what_failed= "recv";
+      if (nonblock) {
+         /* Get current flags */
+         fd_flags = fcntl(stream_fd, F_GETFL, 0);
+         if (fd_flags == -1) {
+            *err_code = errno;
+            *what_failed = "fcntl(F_GETFL)";
+            return -2;
+         }
+
+         /* Add O_NONBLOCK flag if not already set */
+         if (!(fd_flags & O_NONBLOCK)) {
+            if (fcntl(stream_fd, F_SETFL, fd_flags | O_NONBLOCK) == -1) {
+               *err_code = errno;
+               *what_failed = "fcntl(F_SETFL)";
+               return -2;
+            }
+         }
       }
+
+      /* Use read() instead of recv() for general file descriptors */
+      got= read(stream_fd, buffer, count);
+      if (got < 0) {
+         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            got= -1;
+         else {
+            got= -2;
+            *err_code = errno;
+            *what_failed = "read";
+         }
+      }
+      /* Restore original flags if we changed them */
+      if (nonblock && !(fd_flags & O_NONBLOCK)) {
+         if (fcntl(stream_fd, F_SETFL, fd_flags) == -1)
+            /* can't return error without losing data from 'read'... */
+            warn("Failed to restore blocking state on stream: %s", strerror(errno));
+      }
+      return got;
    }
    else
-      read_perlio_sanitized(stream, buffer, count);
+      return read_perlio_sanitized(stream, buffer, count);
 }
 
 #endif /* POSIX */
 
-size_t secret_buffer_append_textline(secret_buffer *buf, PerlIO *stream, int max_chars, unsigned flags) {
-   /* Return how much we append to the buffer, so record original length */
-   size_t orig_len = buf->len;
-   /* PerlIO may or may not be backed by a real OS file descriptor */
-   int stream_fd= PerlIO_fileno(stream);
-   /* Disable echo, if possible */
-   console_state prev_state;
-   bool console_changed= disable_console_echo(stream_fd, &prev_state);
-   /* Read one character at a time, because once we find "\n" the rest needs to stay in the OS buffer.
-    * This is inefficient, but passwords are relatively short so it hardly matters.
-    */
-   while (max_chars != 0) {
-      int got;
-      const char *what_failed= NULL;
-      sys_error_type err_code= 0;
-      /* Ensure buffer capacity */
-      if (buf->capacity < buf->len + 1)
-         secret_buffer_alloc_at_least(buf, buf->len + 1);
-      got= read_sanitized(stream, buf->data + buf->len, 1, (flags & SECRET_BUFFER_NONBLOCK),
-         &err_code, &what_failed);
-      if (got < 0)
-         croak_with_syserr(what_failed, err_code);
-      if (got == 0)
-         break;
-      if (buf->data[buf->len] == '\r' || buf->data[buf->len] == '\n')
-         break;
-      ++buf->len;
-      if (max_chars > 0)
-         --max_chars;
-   }
-   /* Restore echo if we disabled it */
-   if (console_changed)
-      restore_console_state(stream_fd, &prev_state);
-   /* Return number of bytes appended */
-   return buf->len - orig_len;
-}
-
-size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *stream, size_t count, unsigned flags) {
+/* returns number of bytes appended, 0 for EOF (or count==0), or -1 for temporary error.
+ *  croaks on fatal error.
+ */
+IV secret_buffer_append_read(secret_buffer *buf, PerlIO *stream, size_t count, unsigned flags) {
    size_t orig_len = buf->len;
    sys_error_type err_code= 0;
    const char *what_failed= NULL;
@@ -460,16 +458,72 @@ size_t secret_buffer_append_sysread(secret_buffer *buf, PerlIO *stream, size_t c
       secret_buffer_alloc_at_least(buf, buf->len + count);
 
    do {
-      int got= read_sanitized(stream, buf->data + buf->len, 1, (flags & SECRET_BUFFER_NONBLOCK),
-            &err_code, &what_failed);
-      if (got < 0)
-         croak_with_syserr(what_failed, err_code);
-      if (got == 0)
-         break;
+      int got= read_sanitized(stream, buf->data + buf->len, count,
+         (flags & SECRET_BUFFER_NONBLOCK), &err_code, &what_failed);
+      if (got <= 0) {
+         if (got == -2)
+            croak_with_syserr(what_failed, err_code);
+         /* if FULLCOUNT loop and have some chars, return that */
+         if (buf->len > orig_len)
+            break;
+         return got;
+      }
       buf->len += got;
       count -= got;
    }  while (count > 0 && (flags & SECRET_BUFFER_FULLCOUNT));
    return buf->len - orig_len;  // Return number of bytes read
+}
+
+/* returns number of bytes on success, 0 for EOF (or count==0) even if some bytes appended,
+ * or -1 for temporary error. croaks on fatal error.
+ */
+int secret_buffer_append_getline(secret_buffer *buf, PerlIO *stream) {
+   size_t orig_len = buf->len;
+   /* PerlIO may or may not be backed by a real OS file descriptor */
+   int stream_fd= PerlIO_fileno(stream);
+   /* Disable echo, if possible */
+   console_state prev_state;
+   bool console_changed= disable_console_echo(stream_fd, &prev_state);
+   /* Read one character at a time, because once we find "\n" the rest needs to stay in the OS buffer.
+    * This is inefficient, but passwords are relatively short so it hardly matters.
+    */
+   int got= 0;
+   const char *what_failed= NULL;
+   sys_error_type err_code= 0;
+   while (1) {
+      /* Ensure buffer capacity */
+      if (buf->capacity < buf->len + 1)
+         secret_buffer_alloc_at_least(buf, buf->len + 1);
+      got= read_sanitized(stream, buf->data + buf->len, 1, false, &err_code, &what_failed);
+      if (got <= 0)
+         break;
+      if (buf->data[buf->len] == '\r' || buf->data[buf->len] == '\n') {
+         /* in the event of reading a text file, try to consume the "\n" that follows a "\r".
+          * If we get anything else, push it back into Perl's buffer.
+          */
+         if (buf->data[buf->len] == '\r') {
+            char ch;
+            sys_error_type ignored;
+            const char *also_ignored;
+            if (read_sanitized(stream, &ch, 1, true, &ignored, &also_ignored) > 0) {
+               if (ch != '\n') {
+                  if (PerlIO_ungetc(stream, ch) == EOF)
+                     warn("BUG: lost a character of the input stream");
+               }
+            }
+         }
+         got= 1;
+         break;
+      }
+      ++buf->len;
+   }
+   /* Restore echo if we disabled it */
+   if (console_changed)
+      restore_console_state(stream_fd, &prev_state);
+   if (got == -2) /* fatal error */
+      croak_with_syserr(what_failed, err_code);
+   /* Any EOF is returned as an EOF even if some data appended */
+   return got;
 }
 
 #ifdef WIN32
@@ -532,7 +586,7 @@ void *WriteThread_Proc(void *arg) {
          break;
       }
       if (written == 0) {
-         /* Extremely rare in blocking write, but avoid busy loop */
+         /* Shouldn't happen, but avoid busy loop */
          usleep(1000);
          continue;
       }
@@ -546,17 +600,17 @@ void *WriteThread_Proc(void *arg) {
 }
 #endif /* not WIN32 */
 
-size_t secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count, unsigned flags) {
+IV secret_buffer_write(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count, unsigned flags) {
    const char *err = NULL;
    int saved_errno = 0;
    size_t bytes_written = 0;
-    
+
    if (offset > buf->len)
       croak("Offset exceeds buffer length");
-    
+
    if (offset + count > buf->len)
       count = buf->len - offset;
-    
+
    if (count == 0)
       return 0;
 
@@ -720,8 +774,8 @@ secret_buffer_stringify_magic_get(pTHX_ SV *sv, MAGIC *mg) {
    secret_buffer *buf= (secret_buffer *)mg->mg_ptr;
 //   warn("secret_buffer_stringify_magic_get %p %p", buf->stringify_sv, sv);
    assert(buf->stringify_sv == sv);
-   SvPVX(sv)= buf->data;
-   SvCUR(sv)= buf->len;
+   SvPVX(sv)= buf->data? buf->data : "";
+   SvCUR(sv)= buf->data? buf->len  : 0;
    SvPOK_on(sv);
    SvUTF8_off(sv);
    SvREADONLY_on(sv);
@@ -755,8 +809,8 @@ SV* secret_buffer_get_stringify_sv(secret_buffer *buf) {
       SvUTF8_off(sv);
       SvREADONLY_on(sv);
    }
-   SvPVX(sv)= buf->data;
-   SvCUR(sv)= buf->len;
+   SvPVX(sv)= buf->data? buf->data : "";
+   SvCUR(sv)= buf->data? buf->len  : 0;
    return sv;
 }
 
@@ -807,7 +861,7 @@ static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
 /* Convenience to convert string parameters to the corresponding integer so that Perl-side
  * doesn't always need to import the flag constants.
  */
-static IV parse_flags(SV *sv) {
+static IV parse_io_flags(SV *sv) {
    if (!sv || !SvOK(sv))
       return 0;
    if (SvIOK(sv))
@@ -817,10 +871,26 @@ static IV parse_flags(SV *sv) {
       if (!str[0]) return 0;
       if (strcmp(str, "NONBLOCK") == 0)  return SECRET_BUFFER_NONBLOCK;
       if (strcmp(str, "FULLCOUNT") == 0) return SECRET_BUFFER_FULLCOUNT;
+   }
+   croak("Unknown flag %s", SvPV_nolen(sv));
+}
+
+static IV parse_alloc_flags(SV *sv) {
+   if (!sv || !SvOK(sv))
+      return 0;
+   if (SvIOK(sv))
+      return SvIV(sv);
+   if (SvPOK(sv)) {
+      const char *str= SvPV_nolen(sv);
+      if (!str[0]) return 0;
       if (strcmp(str, "AT_LEAST") == 0)  return SECRET_BUFFER_AT_LEAST;
    }
    croak("Unknown flag %s", SvPV_nolen(sv));
 }
+
+/* for typemap to automatically convert flags */
+typedef int secret_buffer_io_flags;
+typedef int secret_buffer_alloc_flags;
 
 /**********************************************************************************************\
  * Debug helpers
@@ -971,16 +1041,15 @@ length(buf, val=NULL)
       XSRETURN(1);
 
 void
-capacity(buf, val=NULL, flag= NULL)
+capacity(buf, val=NULL, flags= 0)
    auto_secret_buffer buf
    SV *val
-   SV *flag
+   secret_buffer_alloc_flags flags
    PPCODE:
       if (val) { /* wiritng */
          IV ival= SvIV(val);
-         IV iflag= parse_flags(flag);
          if (ival < 0) ival= 0;
-         if (iflag & SECRET_BUFFER_AT_LEAST)
+         if (flags & SECRET_BUFFER_AT_LEAST)
             secret_buffer_alloc_at_least(buf, ival);
          else
             secret_buffer_realloc(buf, ival);
@@ -995,7 +1064,7 @@ clear(buf)
    auto_secret_buffer buf
    PPCODE:
       secret_buffer_realloc(buf, 0);
-      XSRETURN(1);
+      XSRETURN(1); /* self, for chaining */
 
 void
 substr(buf, ofs, count_sv=NULL, replacement=NULL)
@@ -1076,43 +1145,61 @@ UV
 append_random(buf, count, flags=0)
    auto_secret_buffer buf
    UV count
-   UV flags
+   secret_buffer_io_flags flags
    CODE:
       RETVAL= secret_buffer_append_random(buf, count, flags);
    OUTPUT:
       RETVAL
 
-UV
-append_textline(buf, tty, max_chars= -1, flags=0)
+SV *
+append_getline(buf, tty)
    auto_secret_buffer buf
    PerlIO *tty
-   IV max_chars
-   UV flags
+   INIT:
+      int got;
    CODE:
-      RETVAL= secret_buffer_append_textline(buf, tty, max_chars, flags);
+      got= secret_buffer_append_getline(buf, tty);
+      RETVAL= got == SECRET_BUFFER_GOTLINE? &PL_sv_yes
+         : got == SECRET_BUFFER_EOF? &PL_sv_no
+         : &PL_sv_undef;
    OUTPUT:
       RETVAL
 
-UV
-append_sysread(buf, io, count, flags=0)
+IV
+append_read(buf, io, count, flags=0)
    auto_secret_buffer buf
    PerlIO *io
    UV count
-   UV flags
+   secret_buffer_io_flags flags
    CODE:
-      RETVAL= secret_buffer_append_sysread(buf, io, count, flags);
+      RETVAL= secret_buffer_append_read(buf, io, count, flags);
    OUTPUT:
       RETVAL
 
-UV
-syswrite(buf, io, offset=0, count=buf->len, flags=0)
+IV
+write(buf, io, ofs=0, count=buf->len, flags=0)
    auto_secret_buffer buf
    PerlIO *io
-   UV offset
-   UV count
-   UV flags
+   IV ofs
+   IV count
+   secret_buffer_io_flags flags
    CODE:
-      RETVAL= secret_buffer_syswrite(buf, io, offset, count, flags);
+      /* normalize negative offset, and clamp to valid range */
+      if (ofs < 0)
+         ofs= buf->len + ofs;
+      if (ofs < 0)
+         ofs= 0;
+      else if (ofs > buf->len)
+         ofs= buf->len;
+      /* normalize negative count, and clamp to valid range */
+      if (count < 0) {
+         count= buf->len + count - ofs;
+         if (count < 0)
+            count= 0;
+      }
+      if (ofs + count > buf->len)
+         count= buf->len - ofs;
+      RETVAL= secret_buffer_write(buf, io, ofs, count, flags);
    OUTPUT:
       RETVAL
 

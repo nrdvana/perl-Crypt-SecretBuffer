@@ -10,6 +10,8 @@ is( "$buf", '*****', 'custom stringify_mask' );
 $buf->{stringify_mask}= undef;
 is( "$buf", 'test', 'disable stringify_mask' );
 
-undef $buf;
+$buf= Crypt::SecretBuffer->new;
+$buf->{stringify_mask}= undef;
+is( "$buf", '', 'uninitialized buffer returns empty string' );
 
 done_testing;
