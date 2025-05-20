@@ -6,9 +6,6 @@ typedef struct {
    SV *stringify_sv;
 } secret_buffer;
 
-#define SECRET_BUFFER_NONBLOCK  1
-#define SECRET_BUFFER_FULLCOUNT 2
-
 /* Create a new Crypt::SecretBuffer object with a mortal ref and return its secret_buffer
  * struct pointer.
  * If ref_out is NULL then the mortal ref remains mortal, and as your function exits the next
@@ -54,22 +51,21 @@ extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity
  * If you request the flag 'NONBLOCK' it performs a non-blocking read.
  * If you request the flag 'FULLCOUNT' it repeatedly runs blocking reads until it reaches the
  * desired count.  Note that only some systems block on lack of entropy in the first place;
- * the flags are not relevant on WIndows.
+ * the flags are not relevant on Windows.
  */
+#define SECRET_BUFFER_NONBLOCK  1
+#define SECRET_BUFFER_FULLCOUNT 2
 extern IV secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags);
 
-/* Append 'count' bytes from a file handle, while attempting to skip application buffering.
- * This can be useful when you want to read from a sensitive file without loading it
- * generically into perl scalars.  This supports the FULLCOUNT and NONBLOCK flags, but not
- * both at the same time.
- * The return value is:
- *   * Number of characters added
- *   * SECRET_BUFFER_EOF (0) if EOF encountered
- *   * SECRET_BUFFER_INCOMPLETE (-1) - Temporary error like EAGAIN or EINTR
- *   * croaks on any fatal OS error
- * (this is wrapping the differences between POSIX and Win32, so errno isn't portable)
+/* Same semantics as sysread, but append all bytes received onto the end of the buffer.
  */
-extern IV secret_buffer_append_read(secret_buffer *buf, PerlIO *fh, size_t count, unsigned flags);
+extern IV secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_t count);
+
+/* This first checks whether the perl I/O buffer has data in it, and uses that for as much of
+ * the read as possible (and attempts to wipe that buffer).  If Perl does not have anything in
+ * its I/O buffer, this performs a sysread.
+ */
+extern IV secret_buffer_append_read(secret_buffer *buf, PerlIO *fh, size_t count);
 
 /* Append one line of text from a stream, stopping at the first CR or LF (or both).
  * The line terminator is not appended to the buffer.
@@ -84,16 +80,33 @@ extern IV secret_buffer_append_read(secret_buffer *buf, PerlIO *fh, size_t count
 #define SECRET_BUFFER_GOTLINE 1
 extern int secret_buffer_append_getline(secret_buffer *buf, PerlIO *fh);
 
-/* Write a segment of this buffer into the supplied file handle.
- * If SECRET_BUFFER_NONBLOCK flag is requested, this writes only as much as one syscall can fit
- * into the pipe (or handle, or socket, etc).
- * If SECRET_BUFFER_FULLCOUNT flag is requested, this continues looping as long as it doesn't
- * get an error until the full requested 'count' is written.
- * If you specify both NONBLOCK and FULLCOUNT flags, and the first write does not deliver the
- * full count, then this forks off a thread to continue pumping data into the pipe.
- * On Win32, you get a thread instead of a fork().
+/* Same semantics as syswrite, but from a range of this buffer.
  */
-extern IV secret_buffer_write(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count, unsigned flags);
+extern IV secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count);
+
+/* Write the entire (range of the) buffer into the file handle, using a thread if needed.
+ * This first attempts a non-blocking write into the handle (such as a pipe) and then if it
+ * would block, it creates a background thread that pumps data into the handle until complete
+ * or until a fatal error.  The return value is just like syswrite except that if it returns
+ * zero, the thread has been created.  If you want to be able to check for completion of the
+ * write, pass a reference to a 'secret_buffer_write_result' and then call
+ * secret_buffer_check_result() on that.
+ */
+struct secret_buffer_write_result;
+typedef struct secret_buffer_write_result *secret_buffer_write_result;
+extern IV secret_buffer_write_async(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count,
+   secret_buffer_write_result *result);
+
+/* Check the result of secret_buffer_write_async.  If it is still running, this returns false.
+ * If true, then the operation is complete, and you can find out how many bytes it wrote and
+ * whether an error occurred by passing references to be filled.
+ */
+extern bool secret_buffer_check_result(secret_buffer_write_result *result, int wait_timeout_msec, IV *os_err, IV *wrote);
+
+/* Free any resources of a secret_buffer_write_result.
+ * Does not need called if secret_buffer_check_result returns true.
+ */
+extern void secret_buffer_cancel_result(secret_buffer_write_result *result);
 
 /* Return a magical SV which exposes the secret buffer.
  * This should be used sparingly, if at all, for interoperating with perl code that isn't
