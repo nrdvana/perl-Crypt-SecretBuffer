@@ -50,7 +50,18 @@ $dep->set_libs(join ' ', (map "-L$_", @libpath))
    if @libpath;
 $dep->set_inc(join ' ', map "-I$_", @incpath)
    if @incpath;
-$dep->install('SecretBuffer.h');
+$dep->install('SecretBuffer.h', 'SecretBufferManualLinkage.h');
 $dep->add_xs('SecretBuffer.xs');
 $dep->add_pm(map { my $n= $_; $n =~ s/^lib/\$(INST_LIB)/; $_ => $n } <lib/*/*.pm>, <lib/*/*/*.pm>);
 $dep->add_typemaps('typemap');
+
+sub MY::postamble {
+   return <<LITERAL;
+
+SecretBufferManualLinkage.h: SecretBuffer.h
+\t\$(PERL) build-api-linkage-header.pl < SecretBuffer.h > SecretBufferManualLinkage.h
+
+SecretBuffer.c: SecretBufferManualLinkage.h
+
+LITERAL
+}

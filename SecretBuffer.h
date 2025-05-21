@@ -121,4 +121,6 @@ extern SV* secret_buffer_get_stringify_sv(secret_buffer *buf);
  */
 extern void secret_buffer_wipe(char *buf, size_t len);
 
+#include "SecretBufferManualLinkage.h"
+
 #endif /* CRYPT_SECRETBUFFER_H */

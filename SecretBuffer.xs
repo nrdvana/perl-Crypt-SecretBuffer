@@ -1235,3 +1235,4 @@ BOOT:
    newCONSTSUB(stash, "NONBLOCK",  new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK,  newSVpvs_share("NONBLOCK")));
    newCONSTSUB(stash, "FULLCOUNT", new_enum_dualvar(aTHX_ SECRET_BUFFER_FULLCOUNT, newSVpvs_share("FULLCOUNT")));
    newCONSTSUB(stash, "AT_LEAST",  new_enum_dualvar(aTHX_ SECRET_BUFFER_AT_LEAST,  newSVpvs_share("AT_LEAST")));
+   SECRET_BUFFER_EXPORT_FUNCTION_POINTERS
