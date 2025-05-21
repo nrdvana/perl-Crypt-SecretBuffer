@@ -59,7 +59,7 @@ sub MY::postamble {
    return <<LITERAL;
 
 SecretBufferManualLinkage.h: SecretBuffer.h
-\t\$(PERL) build-api-linkage-header.pl < SecretBuffer.h > SecretBufferManualLinkage.h
+\t\$(PERL) build-manual-linkage-header.pl < SecretBuffer.h > SecretBufferManualLinkage.h
 
 SecretBuffer.c: SecretBufferManualLinkage.h
 
