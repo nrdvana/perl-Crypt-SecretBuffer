@@ -42,7 +42,6 @@ static void secret_buffer_import_function_pointer(pTHX_ HV *api, void **dest, co
 
 #define SECRET_BUFFER_EXPORT_FUNCTION_POINTERS \\
    { HV *c_api = get_hv("Crypt::SecretBuffer::C_API", GV_ADD); \\
-     SV *elem; \\
 @{[ map qq{     hv_stores(c_api, "$_->{name}", new_enum_dualvar(aTHX_ (IV)($_->{name}), newSVpvs("$_->{proto}"))); \\}, @api ]}
    }
 

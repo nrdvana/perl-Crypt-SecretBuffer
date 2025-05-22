@@ -46,11 +46,12 @@ Win32 equivalent.
 
 ### XS Code
 
-When writing XS code, take special case to make sure that if something dies with an exception,
+When writing XS code, take special care to make sure that if something dies with an exception,
 the Perl temporaries system will take care of cleaning up allocations etc.  For example,
 SAVEFREEPV can deallocate buffers automatically.  Use "croak" or "croak_with_syserror" in any
 place that the user has obviously violated the API of a function.  Return false or NULL etc.
-for common scenarios where a result can't be computed.
+for common scenarios where a result can't be computed but there was a reasonable expectation a
+user might supply those parameters.
 
 Note the style of the functions used in the typemap that convert Perl objects into pointers to
 C structs, like `secret_buffer* secret_buffer_from_magic(SV *obj, int flags);`.  The extension
@@ -83,9 +84,11 @@ test name to that like `./dzil-prove t/10-substr.t`.
 
 This process is using `dzil build` to create a directory `./Crypt-SecretBuffer-$VERSION` and
 then `perl Makefile.PL` inside that directory to build several source files including
-`SecreBuffer.c`.  You can inspect those generated files, but remember that you need to make any
-changes to the files in the root of the project, then regenerate the generated files with `dzil`
-and `make`.
+`SecretBuffer.c`.  It then runs `make` to compile, and then `prove -lvb` to set up the perl
+module path to include the generated .so file.
+
+You can inspect those generated files, but remember that any changes need to be made to the
+files in the root of the project, then regenerate the generated files per the recipe above.
 
 Any common functions useful in more than one test can be added to t/lib/Test2AndUtils.pm
 
