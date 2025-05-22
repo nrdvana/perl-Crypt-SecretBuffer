@@ -43,8 +43,11 @@ extern void secret_buffer_realloc(secret_buffer *buf, size_t new_capacity);
  */
 extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity);
 
-#define SECRET_BUFFER_EOF         0
-#define SECRET_BUFFER_INCOMPLETE -1
+/* Set the length of defined data within the buffer.
+ * If it shrinks, the bytes beyond the end get zeroed.
+ * If it grows, the new bytes are zeroes (by virtue of having already cleared the allocation)
+ */
+extern void secret_buffer_set_len(secret_buffer *buf, size_t new_len);
 
 /* Append N bytes of cryptographic quality random bytes to the end of the buffer.
  * This may block if your entropy pool is low.
@@ -54,7 +57,6 @@ extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity
  * the flags are not relevant on Windows.
  */
 #define SECRET_BUFFER_NONBLOCK  1
-#define SECRET_BUFFER_FULLCOUNT 2
 extern IV secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags);
 
 /* Same semantics as sysread, but append all bytes received onto the end of the buffer.
@@ -71,42 +73,40 @@ extern IV secret_buffer_append_read(secret_buffer *buf, PerlIO *fh, size_t count
  * The line terminator is not appended to the buffer.
  * If the stream is a TTY or Windows Console, this also disables echo while reading.
  *
- * The return value is:
- *   * SECRET_BUFFER_GOTLINE (1) - Received a line (and line terminator)
- *   * SECRET_BUFFER_EOF (0)     - Encountered EOF (even if partial line)
- *   * SECRET_BUFFER_INCOMPLETE  - Temporary error like EAGAIN or EINTR (even if partial line)
- *   * croaks on any fatal OS error
+ * The return value is 1 when a line is read to completion.  Otherwise it is the same result
+ * as _append_sysread (0 for EOF, -1 for an OS error)
  */
-#define SECRET_BUFFER_GOTLINE 1
-extern int secret_buffer_append_getline(secret_buffer *buf, PerlIO *fh);
+#define SECRET_BUFFER_GOTLINE     1
+#define SECRET_BUFFER_EOF         0
+#define SECRET_BUFFER_INCOMPLETE -1
+extern int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *fh);
 
 /* Same semantics as syswrite, but from a range of this buffer.
  */
-extern IV secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count);
+extern IV secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, IV offset, IV count);
 
 /* Write the entire (range of the) buffer into the file handle, using a thread if needed.
  * This first attempts a non-blocking write into the handle (such as a pipe) and then if it
  * would block, it creates a background thread that pumps data into the handle until complete
  * or until a fatal error.  The return value is just like syswrite except that if it returns
  * zero, the thread has been created.  If you want to be able to check for completion of the
- * write, pass a reference to a 'secret_buffer_write_result' and then call
- * secret_buffer_check_result() on that.
+ * write, pass a pointer reference to ref_out to receive the completion "promise" object.
+ * The reference to the completion promise is mortal, and if it goes out of scope you won't
+ * be able to check the status of the write anymore.
  */
-struct secret_buffer_write_result;
-typedef struct secret_buffer_write_result *secret_buffer_write_result;
-extern IV secret_buffer_write_async(secret_buffer *buf, PerlIO *fh, size_t offset, size_t count,
-   secret_buffer_write_result *result);
+extern IV secret_buffer_write_async(secret_buffer *buf, PerlIO *fh, IV offset, IV count,
+   SV **ref_out);
 
 /* Check the result of secret_buffer_write_async.  If it is still running, this returns false.
  * If true, then the operation is complete, and you can find out how many bytes it wrote and
  * whether an error occurred by passing references to be filled.
  */
-extern bool secret_buffer_check_result(secret_buffer_write_result *result, int wait_timeout_msec, IV *os_err, IV *wrote);
+extern bool secret_buffer_result_check(SV *promise_ref, int timeout_msec, IV *wrote, IV *os_err);
 
-/* Free any resources of a secret_buffer_write_result.
- * Does not need called if secret_buffer_check_result returns true.
+/* Requests that the write operation be stopped.  The write operation will stop anyway when it
+ * gets a pipe error, but this is just in case you want to interrupt it before completion.
  */
-extern void secret_buffer_cancel_result(secret_buffer_write_result *result);
+//extern void secret_buffer_result_cancel(SV *promise_ref);
 
 /* Return a magical SV which exposes the secret buffer.
  * This should be used sparingly, if at all, for interoperating with perl code that isn't

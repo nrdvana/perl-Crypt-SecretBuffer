@@ -6,7 +6,7 @@ package Crypt::SecretBuffer;
 
   $buf= Crypt::SecretBuffer->new;
   print "Enter your password: ";
-  $buf->append_tty_line(\*STDIN)  # read TTY with echo disabled
+  $buf->append_getline(\*STDIN)   # read TTY with echo disabled
     or die "Aborted";
   say $buf;                       # prints "[REDACTED]"
   
@@ -60,6 +60,32 @@ There is no guarantee that the XS function in that example wouldn't make a copy 
 but this at least provides the secret buffer directly to the XS code that calls C<SvPV> without
 making a copy.  If an XS module is aware of Crypt::SecretBuffer, it can use a more official C
 API that doesn't rely on perl stringification behavior.
+
+=head1 USAGE IN XS MODULES
+
+Since this module is somewhat more intended for XS than Perl users, I'm documenting the
+internal C API here.
+
+First, your XS module should use L<ExtUtils::Depends> to depend on the C API of this module:
+
+  my $dep= ExtUtils::Depends->new('Your::Module', 'Crypt::SecretBuffer');
+  ...
+  WriteMakefile(
+    'NAME' => 'Mymodule',
+    $dep->get_makefile_vars()
+  );
+
+If you are on a GNU Libc platform which supports global symbol linkage (e.g. Linux, not Mac or
+Windows) all you need to do is use the header "SecretBuffer.h" and get to work.  If you want
+to compile on Mac or Windows, you also need to declare function pointer symbols for the exports
+and initialize them:
+
+  #include "SecretBuffer.h"
+  SECRET_BUFFER_DECLARE_FUNCTION_POINTERS
+  SECRET_BUFFER_DEFINE_FUNCTION_POINTERS
+  ...
+  BOOT:
+    SECRET_BUFFER_IMPORT_FUNCTION_POINTERS
 
 =cut
 
@@ -118,11 +144,11 @@ Capacity beyond 'length' is not initialized.
 
   say $buf->length;
   $buf->length(0);
-  $buf->length(32);   # fills with 32 secure random bytes
+  $buf->length(32);   # fills with zeroes
 
 This gets or sets the length of the string in the buffer.  If you set it to a smaller value,
 the string is truncated.  If you set it to a larger value, the L</capacity> is raised as needed
-and the bytes are initialized with L</append_random>.
+and the bytes are initialized with zeroes.
 
 =method clear
 
@@ -141,67 +167,56 @@ and they are not an lvalue that alters the original.
 
   $byte_count= $buf->append_random($n_bytes);
   $byte_count= $buf->append_random($n_bytes, NONBLOCK);
-  $byte_count= $buf->append_random($n_bytes, FULLCOUNT);
 
 Append N cryptographic-quality random bytes.  This uses either the c library 'getrandom' call
 with C<GRND_RANDOM>, or if that isn't available, it reads from /dev/random.  The NONBLOCK flag
-can be used to avoid blocking waiting on entropy, and the 'FULLCOUNT' flag can be used to loop
-if the call returns fewer than the requested bytes.
+can be used to avoid blocking waiting on entropy.  NONBLOCK is ignored on Windows because it
+always returns the requested number of bytes and never blocks.
 
-B<Win32 Note:> On Windows, the flags are irrelevant because it always returns the requested
-number of bytes and never blocks.
+=method append_console_line
 
-=method append_getline
+  $bool= $buf->append_console_line(STDIN);
 
-  $bool= $buf->append_getline(STDIN);
-
-This turns off TTY echo (if the handle is a Unix TTY or Windows Console), reads and appends
+This turns off TTY echo (if the handle is a Unix TTY or Windows Console) and reads and appends
 characters until newline or EOF (and does not store the \r or \n characters).
 It returns true if the read "completed" with a line terminator, or false on EOF, or
-C<undef> on a temporary error like EAGAIN or EINTR.  Any other read error throws an exception.
-Characters may be added to the buffer even when it returns false.
+C<undef> on any OS error.  Characters may be added to the buffer even when it returns false.
+There may also be no characters added when it returns true, if the user just hits <enter>.
 
 When possible, this reads directly from the OS to avoid buffering the secret in libc or Perl,
 but reads from the buffer if you already have input data in one of those buffers, or if the
 file handle is a virtual Perl handle not backed by the OS.
+
+=method append_sysread
+
+  $byte_count= $buf->append_sysread($fh, $count);
+
+This performs a low-level read from the file handle and appends the bytes to the buffer.
+It must be a real file handle with an underlying file descriptor number (C<fileno>).
+Like C<sysread>, on error it returns C<undef> and on succes it returns the count added.
+This ignores Perl I/O layers.
 
 =method append_read
 
   $byte_count= $buf->append_read($fh, $count);
-  $byte_count= $buf->append_read($fh, $count, NONBLOCK);
-  $byte_count= $buf->append_read($fh, $count, FULLCOUNT);
 
-This performs a low-level read from the file handle and appends the bytes to the buffer.
-It must be a real file handle with an underlying file descriptor number (C<fileno>).
-Note that on most unixes, C<NONBLOCK> does not apply to disk files, only to pipes, sockets, etc.
-If you specify the C<FULLCOUNT> flag and the sysread returns less than C<$count>, it will loop
-until the full count is reached or until EOF.  FULLCOUNT cannot be combined with NONBLOCK.
-
-When possible, this reads directly from the OS to avoid buffering the secret in libc or Perl,
-but reads from the buffer if you already have input data in one of those buffers, or if the
-file handle is a virtual Perl handle not backed by the OS.
+This is a relaxed version of C<append_sysread> that when possible, reads directly from the OS
+to avoid buffering the secret in libc or Perl, but reads from the Perl buffer if you already
+have input data in one of those buffers, or if the file handle is a virtual Perl handle not
+backed by the OS.
 
 =method syswrite
 
   $byte_count= $buf->syswrite($fh); # one syswrite attempt of whole buffer
-  $byte_count= $buf->syswrite($fh, $ofs, $n); # subset of buffer
-  $byte_count= $buf->syswrite($fh, $ofs, $n, NONBLOCK); # one non-blocking write
-  $byte_count= $buf->syswrite($fh, $ofs, $n, FULLCOUNT); # blocking write in a loop
-  $byte_count= $buf->syswrite($fh, $ofs, $n, NONBLOCK|FULLCOUNT); # maybe background thread
+  $byte_count= $buf->syswrite($fh, $count); # prefix of buffer
+  $byte_count= $buf->syswrite($fh, $count, $offset); # substr of buffer
 
 This performs a low-level write from the buffer into a file handle.  It must be a real file
-handle with an underlying file descriptor (C<fileno>).
+handle with an underlying file descriptor (C<fileno>).  If the handle has pending bytes in its
+IO buffer, those are flushed first.  Like C<syswrite>, this returns C<undef> on an OS error,
+and otherwise returns the number of bytes written.  This ignores Perl I/O layers.
 
-The default behavior is to perform one blocking syswrite of the full buffer, and let you know
-how many bytes the OS wrote during that call.  It croaks on errors.
-If you specify the flag C<FULLCOUNT>, it will continue performing blocking writes until the full
-count is written, or an error occurs.
-If you specify the flag C<NONBLOCK>, it makes one nonblocking attempt to write the buffer.
-If you specify both flags, it makes one nonblocking attempt and then if the complete data was
-not written it creates a background thread/process to continue blocking writes into that file
-handle until an error occurs or the full count is written.  This thread gets a copy of the
-secret and the secret remains in memory until the thread exits, but you may free C<$buf>
-whenever you want.
+=method 
 
 =method as_pipe
 

@@ -29,7 +29,7 @@ sub unescape_nonprintable {
 }
 
 # Test normal file handle reading
-subtest 'append_getline with file' => sub {
+subtest 'append_console_line with file' => sub {
    my ($fh, $filename) = tempfile();
    print $fh "test data\nmore test data\nwindows newline\r\nline afterward\r\n";
    seek($fh, 0, 0); # Rewind
@@ -37,46 +37,46 @@ subtest 'append_getline with file' => sub {
    my $buf = secret;
    $buf->{stringify_mask}= undef;
 
-   my $result = $buf->append_getline($fh);
-   is($result, T, 'append_getline returns true for complete line');
+   my $result = $buf->append_console_line($fh);
+   is($result, T, 'append_console_line returns true for complete line');
 
    is("$buf", "test data", 'Buffer contains expected data');
    is($buf->length, 9, 'Buffer length is correct');
 
    # Test reading another line
-   $result = $buf->append_getline($fh);
-   ok($result, 'Second append_getline returns true');
+   $result = $buf->append_console_line($fh);
+   ok($result, 'Second append_console_line returns true');
 
    is("$buf", "test datamore test data", 'Buffer contains appended data');
    is($buf->length, 23, 'Updated buffer length is correct');
 
    # Test reading with windows line ending
-   $result = $buf->clear->append_getline($fh);
-   ok($result, 'Third append_getline returns true');
+   $result = $buf->clear->append_console_line($fh);
+   ok($result, 'Third append_console_line returns true');
 
    is("$buf", "windows newline", 'Buffer contains appended data');
    is($buf->length, 15, 'Updated buffer length is correct');
 
    # Test reading following windows line ending
-   $result = $buf->append_getline($fh);
-   ok($result, 'Fourth append_getline returns true');
+   $result = $buf->append_console_line($fh);
+   ok($result, 'Fourth append_console_line returns true');
 
    is("$buf", "windows newlineline afterward", 'Buffer contains appended data');
    is($buf->length, 29, 'Updated buffer length is correct');
 
    # Test EOF condition
-   $result = $buf->append_getline($fh);
-   is($result, DF, 'append_getline returns false on EOF');
+   $result = $buf->append_console_line($fh);
+   is($result, DF, 'append_console_line returns false on EOF');
 };
 
 # Test with an in-memory file handle using a reference to a scalar
-subtest 'append_getline with scalar ref handle' => sub {
+subtest 'append_console_line with scalar ref handle' => sub {
    my $data = "password\n";
    open my $fh, '<', \$data or die "Cannot open scalar ref: $!";
 
    my $buf = Crypt::SecretBuffer->new;
-   my $result = $buf->append_getline($fh);
-   ok($result, 'append_getline returns true with scalar ref handle');
+   my $result = $buf->append_console_line($fh);
+   ok($result, 'append_console_line returns true with scalar ref handle');
 
    $buf->{stringify_mask} = undef;
    is("$buf", "password", 'Buffer contains expected password');
@@ -84,26 +84,26 @@ subtest 'append_getline with scalar ref handle' => sub {
 };
 
 # Test with empty line
-subtest 'append_getline with empty line' => sub {
+subtest 'append_console_line with empty line' => sub {
    my ($r, $w)= pipe_with_data("\n");
    $w->close;
 
    my $buf = Crypt::SecretBuffer->new;
-   my $result = $buf->append_getline($r);
-   ok($result, 'append_getline returns true with empty line');
+   my $result = $buf->append_console_line($r);
+   ok($result, 'append_console_line returns true with empty line');
    is($buf->length, 0, 'Buffer length is zero for empty line');
 };
 
 # Test with no newline
-subtest 'append_getline with no newline' => sub {
+subtest 'append_console_line with no newline' => sub {
    my ($r, $w)= pipe_with_data("incomplete");
    $r->blocking(0);
 
    my $buf = Crypt::SecretBuffer->new;
    $buf->{stringify_mask} = undef;
 
-   my $result = $buf->append_getline($r);
-   is($result, undef, 'append_getline returns undef on nonblocking incomplete line');
+   my $result = $buf->append_console_line($r);
+   is($result, undef, 'append_console_line returns undef on nonblocking incomplete line');
 
    is("$buf", "incomplete", 'Buffer contains partial data');
    is($buf->length, 10, 'Buffer length matches input length');
@@ -123,9 +123,9 @@ subtest 'parent/child pipe communication' => sub {
    
    # Parent process
    my $buf = Crypt::SecretBuffer->new();
-   my $result = $buf->append_getline($read_fh);
+   my $result = $buf->append_console_line($read_fh);
    
-   is($result, T, 'append_getline returns true when reading from child process pipe');
+   is($result, T, 'append_console_line returns true when reading from child process pipe');
    is($buf->length, 25, 'buffer contains correct number of characters from child process');
    
    $buf->{stringify_mask} = undef;
@@ -243,7 +243,7 @@ subtest 'TTY functionality' => sub {
          $tty->print("Enter Password: ");
          $send_msg->(sleep => .1);
          $send_msg->(type => "password123\r"); # type \r to receive \n on tty
-         is( $buf->append_getline($tty), T, 'received full line' );
+         is( $buf->append_console_line($tty), T, 'received full line' );
          is( $buf->length, 11, 'got 11 chars' );
          is( do { local $buf->{stringify_mask}= undef; "$buf" }, "password123", 'got password' );
          $send_msg->('read_pty');
@@ -270,12 +270,12 @@ subtest 'PerlIO buffer interaction' => sub {
    $write_fh->print("\nline two\n");
 
    # The getline function will now read "one" from perl's buffer and then "\n" from a sysread
-   is($buf->append_getline($read_fh), T, 'append_getline got a line');
+   is($buf->append_console_line($read_fh), T, 'append_console_line got a line');
    is($buf->length, 3, 'buffer->len');
    is("$buf", 'one', 'first line is correct');
 };
 
-subtest 'multiple buffers with append_getline' => sub {
+subtest 'multiple buffers with append_console_line' => sub {
    my ($read_fh, $write_fh)= pipe_with_data("line1\nline2\nline3\n");
    close($write_fh);
    
@@ -283,9 +283,9 @@ subtest 'multiple buffers with append_getline' => sub {
    my $buf2 = Crypt::SecretBuffer->new();
    my $buf3 = Crypt::SecretBuffer->new();
    
-   my $result1 = $buf1->append_getline($read_fh);
-   my $result2 = $buf2->append_getline($read_fh);
-   my $result3 = $buf3->append_getline($read_fh);
+   my $result1 = $buf1->append_console_line($read_fh);
+   my $result2 = $buf2->append_console_line($read_fh);
+   my $result3 = $buf3->append_console_line($read_fh);
    
    is($result1, T, 'first buffer got true result');
    is($result2, T, 'second buffer got true result');
@@ -303,7 +303,7 @@ subtest 'multiple buffers with append_getline' => sub {
    
    # Try reading when no more lines (should be EOF)
    my $buf4 = Crypt::SecretBuffer->new();
-   my $result4 = $buf4->append_getline($read_fh);
+   my $result4 = $buf4->append_console_line($read_fh);
    
    is($result4, DF, 'reading when no more lines returns "EOF"');
    is($buf4->length, 0, 'buffer is empty when EOF reached');

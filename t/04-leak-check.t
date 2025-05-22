@@ -18,7 +18,8 @@ sub count_copies_in_mem {
    return $n;
 }
 
-my $buf= secret(length => 64); # random bytes
+my $buf= secret();
+$buf->append_random(64);
 is( count_copies_in_mem($buf), 1, 'one instance' );
 
 my $clone= secret($buf);
