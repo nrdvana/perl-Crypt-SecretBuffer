@@ -102,13 +102,12 @@ bootstrap Crypt::SecretBuffer;
 {
    package Crypt::SecretBuffer::Exports;
    use Exporter 'import';
-   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret NONBLOCK FULLCOUNT );
+   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret NONBLOCK );
    sub secret_buffer {
       Crypt::SecretBuffer->new(@_)
    }
    *secret= *secret_buffer;
    *NONBLOCK=  *Crypt::SecretBuffer::NONBLOCK;
-   *FULLCOUNT= *Crypt::SecretBuffer::FULLCOUNT;
    *AT_LEAST=  *Crypt::SecretBuffer::AT_LEAST;
 }
 
@@ -233,14 +232,26 @@ and otherwise returns the number of bytes written.  This ignores Perl I/O layers
   ($wrote, $errno)= $async_result->wait;
   ($wrote, $errno)= $async_result->wait($seconds);
 
+Write data into a file handle, using a background thread if needed.  Most likely, you will be
+writing into a pipe, and your secret will be smaller than the OS pipe buffer, so this will
+complete immediately without spawning a thread.  It also immediately returns if there was a
+fatal error attempting to write the handle.  Buf if you have a large secret, or are writing into
+a type of handle that can't buffer it, this function will duplicate your file handle and copy
+the secret and pass them to a background thread to do the writing.
+
+You can check the status or wait for its completion using the
+L<Crypt::SecretBuffer::AsyncResult|$async_result> object.
+
 =method as_pipe
 
   $fh= $buf->as_pipe
 
-This creates a pipe, then calls C<< $self->syswrite(..., NONBLOCK|FULLCOUNT) >> into the
-write-end of the pipe (possibly spawning a background thread to keep pumping the data, but
-very unlikely to need to if your data is less than 4K) and then returns the read-end of the
-pipe.  You can then pass this pipe to other processes.
+This creates a pipe, then calls C<< $self->write_async($pipe) >> into the write-end of the pipe.
+You can then pass this pipe to other processes without needing to "pump" the pipe like you would
+with L<IPC::Run>.
+
+The C<$async_result> from L</write_async> is ignored, allowing the background thread to complete
+(or error on a closed pipe) on its own time.
 
 =cut
 
