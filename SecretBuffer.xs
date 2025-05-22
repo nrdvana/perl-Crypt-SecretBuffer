@@ -701,7 +701,7 @@ int secret_buffer_async_result_magic_free(pTHX_ SV *sv, MAGIC *mg) {
 }
 #ifdef USE_ITHREADS
 int secret_buffer_async_result_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *p) {
-   secret_buffer_async_result_acquire((secret_buffer_async_result *) mg->mg_ptr, false);
+   secret_buffer_async_result_acquire((secret_buffer_async_result *) mg->mg_ptr);
 }
 #endif
 
