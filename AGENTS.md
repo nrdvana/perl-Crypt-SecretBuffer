@@ -66,19 +66,30 @@ that isn't quickly obvious to a perl programmer.
 
 Note that the unit testing is using Test2, and I augmented that module with an 'explain'
 function so that difficult-to-diagnose test failures can dump data structures for quick
-inspection.
+inspection.  If you want to inspect results, a nice idiom is
+```
+is( $actual, $expected )
+  or note explain $actual;
+```
+You can choose whether to leave those diagnostics in the end result or not based on whether you
+expect them to be useful in the future.
 
 TESTING
 -------
 
 This is an XS module, so it needs to be built before tests can be run.  There is a helper
-script `./dzil-prove' which compiles the module and then runs `prove`.  You can also pass a
-test name to that like `./dzil-prove t/10-substr.t`
+script `./dzil-prove` which compiles the module and then runs `prove`.  You can also pass a
+test name to that like `./dzil-prove t/10-substr.t`.
+
+This process is using `dzil build` to create a directory `./Crypt-SecretBuffer-$VERSION` and
+then `perl Makefile.PL` inside that directory to build several source files including
+`SecreBuffer.c`.  You can inspect those generated files, but remember that you need to make any
+changes to the files in the root of the project, then regenerate the generated files with `dzil`
+and `make`.
 
 Any common functions useful in more than one test can be added to t/lib/Test2AndUtils.pm
 
-If you make changes to C or XS code, you should run one compilation with warnings enabled.
-Perl doesn't enable them by default.  You need to `dzil build` to get the
-`./Crypt-SecretBuffer-(VERSION)` directory, then enter that directory and `perl Makefile.PL`,
-then edit the `Makefile` and add `-Wall` to the `CCFLAGS` variable, then compile and observe
-the warnings.
+Perl doesn't enable C warnings by default.  If you want to look for C compiler warnings, you
+need to `dzil build` to get the `./Crypt-SecretBuffer-(VERSION)` directory, then enter that
+directory and `perl Makefile.PL`, then edit the `Makefile` and add `-Wall` to the `CCFLAGS`
+variable, then compile and observe the warnings.
