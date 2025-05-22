@@ -141,14 +141,12 @@ static void* memmem(
    while (p < lim) {
       if (*p == first_ch) {
          // Check each position for the needle
-         if (memcmp(p, needle, needle_len) == 0) {
-            ++count;
-            p += needle_len;
-            continue;
-         }
+         if (memcmp(p, needle, needlelen) == 0)
+            return p;
       }
       ++p;
    }
+   return NULL;
 }
 #endif /* HAVE_MEMMEM */
 
