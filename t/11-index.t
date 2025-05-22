@@ -1,6 +1,6 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
-use Test2WithExplain;
+use Test2AndUtils;
 use Crypt::SecretBuffer qw(secret);
 
 my $buf = Crypt::SecretBuffer->new('abc123abc456');

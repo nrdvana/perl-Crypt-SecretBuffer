@@ -1,6 +1,6 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
-use Test2WithExplain;
+use Test2AndUtils;
 use Crypt::SecretBuffer qw(secret);
 use TestUtils qw(pipe_with_data setup_tty_helper pack_msg unpack_msg);
 

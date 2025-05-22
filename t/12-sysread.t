@@ -1,6 +1,6 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
-use Test2WithExplain;
+use Test2AndUtils;
 use IO::Handle;
 use Crypt::SecretBuffer qw(FULLCOUNT NONBLOCK);
 use TestUtils 'pipe_with_data';
