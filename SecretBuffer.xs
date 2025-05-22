@@ -5,6 +5,7 @@
 
 #include "SecretBuffer.h"
 
+
 /**********************************************************************************************\
 * XS Utils
 \**********************************************************************************************/
@@ -491,7 +492,6 @@ IV secret_buffer_append_read(secret_buffer *buf, PerlIO *stream, size_t count) {
  * or -1 for temporary error. croaks on fatal error.
  */
 int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *stream) {
-   size_t orig_len = buf->len;
    /* PerlIO may or may not be backed by a real OS file descriptor */
    int stream_fd= PerlIO_fileno(stream);
    /* Disable echo, if possible */
@@ -576,7 +576,6 @@ SV *secret_buffer_async_result_wrap_with_object(secret_buffer_async_result *resu
 secret_buffer_async_result* secret_buffer_async_result_from_magic(SV *obj, int flags) {
    SV *sv;
    MAGIC *magic;
-   secret_buffer *buf;
 
    if ((!obj || !SvOK(obj)) && (flags & SECRET_BUFFER_MAGIC_UNDEF_OK))
       return NULL;
@@ -700,10 +699,12 @@ void secret_buffer_async_result_acquire(secret_buffer_async_result *result) {
 
 int secret_buffer_async_result_magic_free(pTHX_ SV *sv, MAGIC *mg) {
    secret_buffer_async_result_release((secret_buffer_async_result *) mg->mg_ptr, false);
+   return 0;
 }
 #ifdef USE_ITHREADS
 int secret_buffer_async_result_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *p) {
    secret_buffer_async_result_acquire((secret_buffer_async_result *) mg->mg_ptr);
+   return 0;
 }
 #endif
 
@@ -782,7 +783,6 @@ DWORD WINAPI secret_buffer_async_writer(LPVOID arg) {
 void *secret_buffer_async_writer(void *arg) {
 #endif
    secret_buffer_async_result *result = (secret_buffer_async_result *) arg;
-   size_t total_written= 0;
    ASYNC_RESULT_MUTEX_LOCK(result);
    ++result->refcount;
    result->started= true;
@@ -793,7 +793,7 @@ void *secret_buffer_async_writer(void *arg) {
    while (result->total_written < result->secret_len) {
       DWORD wrote;
       if (WriteFile((HANDLE) result->fd, result->secret + result->total_written,
-         (DWORD)(result->secret_len - total_written), &wrote, NULL)
+         (DWORD)(result->secret_len - result->total_written), &wrote, NULL)
       ) {
          if (wrote == 0) {
             secret_buffer_async_result_send(result, 0);
@@ -973,10 +973,12 @@ int secret_buffer_stringify_magic_get(pTHX_ SV *sv, MAGIC *mg) {
 
 int secret_buffer_stringify_magic_set(pTHX_ SV *sv, MAGIC *mg) {
    warn("Attempt to assign stringify scalar");
+   return 0;
 }
 
 int secret_buffer_stringify_magic_free(pTHX_ SV *sv, MAGIC *mg) {
 //   warn("Freeing stringify scalar");
+   return 0;
 }
 
 #ifdef USE_ITHREADS
@@ -986,11 +988,10 @@ int secret_buffer_stringify_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
 #endif
 
 SV* secret_buffer_get_stringify_sv(secret_buffer *buf) {
-   MAGIC *magic;
    SV *sv= buf->stringify_sv;
    if (!sv) {
       sv= buf->stringify_sv= newSV(0);
-      magic= sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_stringify_magic_vtbl, (const char *)buf, 0);
+      sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_stringify_magic_vtbl, (const char *)buf, 0);
 #ifdef USE_ITHREADS
       /* magic->mg_flags |= MGf_DUP; it doesn't support duplication, so does the flag need set? */
 #endif
@@ -1106,7 +1107,6 @@ static bool is_page_accessible(uintptr_t addr) {
 
 size_t scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needle, size_t needle_len) {
    size_t pagesize= get_page_size();
-   unsigned char vec;
    size_t count= 0;
    void *at;
    uintptr_t run_start = p, run_lim;
@@ -1140,6 +1140,7 @@ IV scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needle, s
 * Crypt::SecretBuffer API
 \**********************************************************************************************/
 MODULE = Crypt::SecretBuffer                     PACKAGE = Crypt::SecretBuffer
+PROTOTYPES: DISABLE
 
 void
 assign(buf, source= NULL)
@@ -1239,7 +1240,7 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
    SV *count_sv
    SV *replacement
    INIT:
-      unsigned char *sub_start, *sub_limit;
+      unsigned char *sub_start;
       secret_buffer *sub_buf= NULL;
       SV *sub_ref= NULL;
       IV count= count_sv? SvIV(count_sv) : buf->len;
@@ -1248,7 +1249,7 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
       ofs= normalize_offset(ofs, buf->len);
       /* normalize negative count, and clamp to valid range */
       count= normalize_offset(count, buf->len - ofs);
-      sub_start= buf->data + ofs;
+      sub_start= (unsigned char*) buf->data + ofs;
       /* If called in non-void context, construct new secret from this range */
       if (GIMME_V != G_VOID) {
          SV **el;
@@ -1276,7 +1277,7 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
             repl_src= (const unsigned char*) SvPV(replacement, repl_len);
          } else {
             secret_buffer *peer= secret_buffer_from_magic(replacement, SECRET_BUFFER_MAGIC_OR_DIE);
-            repl_src= peer->data;
+            repl_src= (const unsigned char*) peer->data;
             repl_len= peer->len;
          }
          len_diff= repl_len - count;
@@ -1372,7 +1373,7 @@ write_async(buf, io, count=buf->len, ofs=0)
       ST(0)= wrote? sv_2mortal(newSViv(wrote)) : ref_out? ref_out : &PL_sv_undef;
       XSRETURN(1);
 
-SV *
+void
 stringify(buf, ...)
    auto_secret_buffer buf
    INIT:
