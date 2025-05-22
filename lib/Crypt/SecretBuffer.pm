@@ -154,6 +154,15 @@ and the bytes are initialized with zeroes.
 
 Erases the buffer.  Equivalent to C<< $buf->length(0) >>
 
+=method index
+
+  $ofs= $buf->index($str);
+  $ofs= $buf->index($str, $from_offset);
+
+Like Perl's C<index> function, returns -1 if not found, or else the offset of the start of the
+string you asked it to look for.  You can specify an optional starting offset to search from.
+Negative starting offsets search from that many characters before the end of the buffer.
+
 =method substr
 
   $buf->substr(1);            # New SecretBuffer minus the first character
