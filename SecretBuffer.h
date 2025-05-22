@@ -51,10 +51,9 @@ extern void secret_buffer_set_len(secret_buffer *buf, size_t new_len);
 
 /* Append N bytes of cryptographic quality random bytes to the end of the buffer.
  * This may block if your entropy pool is low.
- * If you request the flag 'NONBLOCK' it performs a non-blocking read.
- * If you request the flag 'FULLCOUNT' it repeatedly runs blocking reads until it reaches the
- * desired count.  Note that only some systems block on lack of entropy in the first place;
- * the flags are not relevant on Windows.
+ * If you request the flag 'NONBLOCK' it performs a non-blocking read.  Note that
+ * only some systems block on lack of entropy in the first place; the flag is not
+ * relevant on Windows.
  */
 #define SECRET_BUFFER_NONBLOCK  1
 extern IV secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags);

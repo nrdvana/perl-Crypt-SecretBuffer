@@ -473,8 +473,11 @@ IV secret_buffer_append_read(secret_buffer *buf, PerlIO *stream, size_t count) {
       perlbuffer= PerlIO_get_ptr(stream);
       if (count > n_buffered)
          count= n_buffered;
-      secret_buffer_set_len(buf, buf->len + count);
-      memcpy(buf->data + buf->len, perlbuffer, count);
+      {
+         size_t off = buf->len;
+         secret_buffer_set_len(buf, buf->len + count);
+         memcpy(buf->data + off, perlbuffer, count);
+      }
       /* secret_buffer_wipe(perlbuffer, count); could be a scalar, or read-only constant, or shared string table :-(  */
       PerlIO_set_ptrcnt(stream, perlbuffer+count, n_buffered-count);
       return count;
@@ -499,7 +502,7 @@ int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *stream) {
     */
    int got= 0;
    while (1) {
-      got= secret_buffer_append_sysread(buf, stream, 1);
+      got= secret_buffer_append_read(buf, stream, 1);
       if (got <= 0)
          break;
       if (buf->data[buf->len - 1] == '\r' || buf->data[buf->len - 1] == '\n') {
@@ -509,7 +512,7 @@ int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *stream) {
           * If we get anything else, push it back into Perl's buffer.
           */
          if (*eol == '\r') {
-            if (secret_buffer_append_sysread(buf, stream, 1) > 0) {
+            if (secret_buffer_append_read(buf, stream, 1) > 0) {
                --buf->len;
                if (*eol != '\n') {
                   if (PerlIO_ungetc(stream, *eol) == EOF)
@@ -520,7 +523,6 @@ int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *stream) {
          *eol= 0;
          break;
       }
-      ++buf->len;
    }
    /* Restore echo if we disabled it */
    if (console_changed)

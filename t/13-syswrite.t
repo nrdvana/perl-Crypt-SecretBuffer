@@ -3,7 +3,6 @@ use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
 use IO::Handle;
 use Crypt::SecretBuffer qw(secret);
-use TestUtils 'pipe_with_data';
 
 subtest 'syswrite to pipe' => sub {
     my ($r, $w) = pipe_with_data();
