@@ -4,6 +4,9 @@ Please use a 3-space indent throughout.
 
 ### C Code
 
+Try to use C89 compatible syntax, with `/* */` comments, and declaring variables at the top of
+a block.
+
 When writing C code, look for opportunities to reduce the number of curly braces, for instance
 writing
 
@@ -24,19 +27,22 @@ as
    else
       single_line_of_code;
 ```
-Try to use C89 compatible syntax, with `/* */` comments, and declaring variables at the top of
-a block.  Add comments before any significant block of code, explaining what the next few lines
+
+Add comments before any significant block of code, explaining what the next few lines
 do, but don't document every single line.  Do add line comments for non-obvious API details like
 when Windows functions take a bunch of true/false parameters that aren't explained by a variable
 name.
 
-Also look for ways to code defensively, so that unexpected behavior from the funcitons you call
+Also look for ways to code defensively, so that unexpected behavior from the functions you call
 still follows a sensible control path.
 
 Feel free to use "goto" in the specific circumstance of having a lot of initialized variables
 which need cleaned up, and having a "cleanup" block at the bottom of the function which checks
 each variable and then cleans it if it was initialized.  This avoids redundant cleanup code
 throughout the function.  Beware of any Perl API functions that might 'croak'.
+
+I'm trying to keep this project Win32-compatible, so any solution based on POSIX APIs needs a
+Win32 equivalent.
 
 ### XS Code
 
@@ -68,6 +74,8 @@ TESTING
 This is an XS module, so it needs to be built before tests can be run.  There is a helper
 script `./dzil-prove' which compiles the module and then runs `prove`.  You can also pass a
 test name to that like `./dzil-prove t/10-substr.t`
+
+Any common functions useful in more than one test can be added to t/lib/Test2AndUtils.pm
 
 If you make changes to C or XS code, you should run one compilation with warnings enabled.
 Perl doesn't enable them by default.  You need to `dzil build` to get the
