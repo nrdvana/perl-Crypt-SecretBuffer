@@ -258,7 +258,7 @@ The C<$async_result> from L</write_async> is ignored, allowing the background th
 sub as_pipe {
    my $self= shift;
    pipe(my ($r, $w)) or die "pipe: $!";   
-   $self->syswrite($w, 0, $self->length, NONBLOCK()|FULLCOUNT());
+   $self->syswrite($w, 0, $self->length, NONBLOCK());
    close($w); # XS dups the file handle if it is writing async from a thread
    return $r;
 }

@@ -2,8 +2,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
 use IO::Handle;
-use Crypt::SecretBuffer qw(FULLCOUNT NONBLOCK);
-use TestUtils 'pipe_with_data';
+use Crypt::SecretBuffer qw(NONBLOCK);
 
 sub check_content {
     my ($buf, $expected, $msg) = @_;

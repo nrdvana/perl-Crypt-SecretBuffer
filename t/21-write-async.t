@@ -2,7 +2,6 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
 use Crypt::SecretBuffer qw(secret);
-use TestUtils qw(pipe_with_data setup_tty_helper pack_msg unpack_msg);
 
 subtest 'write_async to pipe' => sub {
     my ($r,$w) = pipe_with_data();
@@ -31,7 +30,7 @@ subtest 'write_async with PTY' => sub {
         is([$act,$data],[read=>'pty secret'],'data received');
         if (ref $res) { my ($w,$e)=$res->wait(5); is $w,length('pty secret'),'all written'; is $e,0,'no err'; }
     });
-});
+};
 
 done_testing;
 
