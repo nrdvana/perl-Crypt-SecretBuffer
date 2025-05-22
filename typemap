@@ -15,7 +15,7 @@ O_SECRET_BUFFER
 
 INPUT
 O_SECRET_BUFFER_ASYNC_RESULT
-   $var= secrt_buffer_async_result_from_magic($arg, SECRET_BUFFER_MAGIC_OR_DIE);
+   $var= secret_buffer_async_result_from_magic($arg, SECRET_BUFFER_MAGIC_OR_DIE);
 
 INPUT
 O_IO_FLAGS

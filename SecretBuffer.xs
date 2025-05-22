@@ -723,7 +723,7 @@ bool secret_buffer_async_result_recv(secret_buffer_async_result *result, IV time
    bool ready= false;
    // Wait for the event with timeout
 #ifdef WIN32
-   DWORD result = WaitForSingleObject(result->readyEvent, timeout_msec);
+   DWORD result = WaitForSingleObject(result->readyEvent, timeout_msec < 0? WAIT_INFINITE : timeout_msec);
    if (result == WAIT_TIMEOUT)
       return false;
    if (result != WAIT_OBJECT_0)
@@ -733,17 +733,20 @@ bool secret_buffer_async_result_recv(secret_buffer_async_result *result, IV time
 #else
    struct timespec ts;
    // Calculate absolute timeout time
-   clock_gettime(CLOCK_REALTIME, &ts);
-   ts.tv_sec += timeout_msec / 1000;
-   ts.tv_nsec += (timeout_msec % 1000) * 1000000;
-   if (ts.tv_nsec >= 1000000000) {
-      ts.tv_sec += 1;
-      ts.tv_nsec -= 1000000000;
+   if (timeout_msec >= 0) {
+      clock_gettime(CLOCK_REALTIME, &ts);
+      ts.tv_sec += timeout_msec / 1000;
+      ts.tv_nsec += (timeout_msec % 1000) * 1000000;
+      if (ts.tv_nsec >= 1000000000) {
+         ts.tv_sec += 1;
+         ts.tv_nsec -= 1000000000;
+      }
    }
    ASYNC_RESULT_MUTEX_LOCK(result);
    // Wait until data is ready or timeout occurs
    while (!result->ready) {
-      int rc = pthread_cond_timedwait(&result->cond, &result->mutex, &ts);
+      int rc = timeout_msec < 0? pthread_cond_wait(&result->cond, &result->mutex)
+         : pthread_cond_timedwait(&result->cond, &result->mutex, &ts);
       if (rc == ETIMEDOUT)
          break;
       ready= result->ready;
@@ -1210,6 +1213,25 @@ clear(buf)
       secret_buffer_realloc(buf, 0);
       XSRETURN(1); /* self, for chaining */
 
+IV
+index(buf, substr, ofs= 0)
+   auto_secret_buffer buf
+   SV *substr
+   IV ofs
+   INIT:
+      char *found;
+      STRLEN len;
+      const char *str= SvPV(substr, len);
+   CODE:
+      /* normalize negative offset, and clamp to valid range */
+      ofs= normalize_offset(ofs, buf->len);
+      found= (char*) memmem(buf->data + ofs, buf->len - ofs, str, len);
+      RETVAL= found? found - buf->data : -1;
+      /* documented bug from glibc 2.0 */
+      if (RETVAL >= buf->len) RETVAL= -1;
+   OUTPUT:
+      RETVAL
+
 void
 substr(buf, ofs, count_sv=NULL, replacement=NULL)
    auto_secret_buffer buf
@@ -1321,25 +1343,6 @@ append_console_line(buf, handle)
          : &PL_sv_undef;
       XSRETURN(1);
 
-IV
-index(buf, substr, ofs= 0)
-   auto_secret_buffer buf
-   SV *substr
-   IV ofs
-   INIT:
-      char *found;
-      STRLEN len;
-      const char *str= SvPV(substr, len);
-   CODE:
-      /* normalize negative offset, and clamp to valid range */
-      ofs= normalize_offset(ofs, buf->len);
-      found= (char*) memmem(buf->data + ofs, buf->len - ofs, str, len);
-      RETVAL= found? found - buf->data : -1;
-      /* documented bug from glibc 2.0 */
-      if (RETVAL >= buf->len) RETVAL= -1;
-   OUTPUT:
-      RETVAL
-
 void
 syswrite(buf, io, count=buf->len, ofs=0)
    auto_secret_buffer buf
@@ -1402,6 +1405,24 @@ _count_matches_in_mem(buf, addr0, addr1)
       RETVAL= scan_mapped_memory_in_range(addr0, addr1, buf->data, buf->len);
    OUTPUT:
       RETVAL
+
+MODULE = Crypt::SecretBuffer                     PACKAGE = Crypt::SecretBuffer::AsyncResult
+
+void
+wait(result, timeout=-1)
+   secret_buffer_async_result *result
+   NV timeout
+   INIT:
+      IV os_err, bytes_written;
+   PPCODE:
+      if (secret_buffer_async_result_recv(result, (IV)(timeout*1000), &bytes_written, &os_err)) {
+         EXTEND(sp, 2);
+         ST(0)= sv_2mortal(newSViv(bytes_written));
+         ST(1)= sv_2mortal(newSViv(os_err));
+         XSRETURN(2);
+      } else {
+         XSRETURN(0);
+      }
 
 BOOT:
    HV *stash= gv_stashpvn("Crypt::SecretBuffer", 19, 1);

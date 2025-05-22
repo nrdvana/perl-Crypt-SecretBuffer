@@ -225,7 +225,13 @@ handle with an underlying file descriptor (C<fileno>).  If the handle has pendin
 IO buffer, those are flushed first.  Like C<syswrite>, this returns C<undef> on an OS error,
 and otherwise returns the number of bytes written.  This ignores Perl I/O layers.
 
-=method 
+=method write_async
+
+  $async_result= $buf->write_async($fh);                  # whole buffer
+  $async_result= $buf->write_async($fh, $count);          # prefix of buffer
+  $async_result= $buf->write_async($fh, $count, $offset); # substr of buffer
+  ($wrote, $errno)= $async_result->wait;
+  ($wrote, $errno)= $async_result->wait($seconds);
 
 =method as_pipe
 
