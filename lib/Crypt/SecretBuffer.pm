@@ -4,11 +4,12 @@ package Crypt::SecretBuffer;
 
 =head1 SYNOPSIS
 
-  $buf= Crypt::SecretBuffer->new;
+  use Crypt::SecretBuffer 'secret';
+  $buf= secret;
   print "Enter your password: ";
-  $buf->append_console_line(\*STDIN)   # read TTY with echo disabled
+  $buf->append_console_line(STDIN)   # read TTY with echo disabled
     or die "Aborted";
-  say $buf;                            # prints "[REDACTED]"
+  say $buf;                          # prints "[REDACTED]"
   
   my @cmd= qw( openssl enc -e -aes-256-cbc -md sha512 -pbkdf2 -iter 239823 -pass fd:3 );
   IPC::Run::run(\@cmd,
@@ -58,8 +59,8 @@ stringification of the buffer reveals the secret or not.  For instance:
 
 There is no guarantee that the XS function in that example wouldn't make a copy of your secret,
 but this at least provides the secret buffer directly to the XS code that calls C<SvPV> without
-making a copy.  If an XS module is aware of Crypt::SecretBuffer, it can use a more official C
-API that doesn't rely on perl stringification behavior.
+making a copy.  If an XS module is aware of Crypt::SecretBuffer, it can use a more official
+L</C API> that doesn't rely on perl stringification behavior.
 
 =cut
 
@@ -72,6 +73,30 @@ use overload '""' => \&stringify;
 
 sub dl_load_flags {0x01} # Share extern symbols with other modules
 bootstrap Crypt::SecretBuffer;
+
+=head1 EXPORTS
+
+=over 15
+
+=item AT_LEAST
+
+Parameter for setting the L</capacity>.
+
+=item NONBLOCK
+
+Parameter for L</append_random>.
+
+=item secret_buffer
+
+Shorthand function for calling L</new>.
+
+=item secret
+
+Shorthand function for calling L</new>.
+
+=back
+
+=cut
 
 {
    package Crypt::SecretBuffer::Exports;
@@ -122,18 +147,17 @@ sub new {
   say $buf->capacity;
   $buf->capacity($n_bytes)->...
   $buf->capacity($n_bytes, AT_LEAST)->...
+  $buf->capacity($n_bytes, 'AT_LEAST')->...
 
 This reads or writes the allocated length of the buffer, presumably because you know how much
 space you need for an upcoming read operation, but it can also free up space you know you no
 longer need.  In the third example, a second parameter 'AT_LEAST' is passed to indicate that
 the buffer does not need reallocated if it is already large enough.
 
-Capacity beyond 'length' is not initialized.
-
 =attribute length
 
   say $buf->length;
-  $buf->length(0);
+  $buf->length(0);    # wipes buffer
   $buf->length(32);   # fills with zeroes
 
 This gets or sets the length of the string in the buffer.  If you set it to a smaller value,
@@ -142,7 +166,7 @@ and the bytes are initialized with zeroes.
 
 =method clear
 
-Erases the buffer.  Equivalent to C<< $buf->length(0) >>
+Erases the buffer.  Equivalent to C<< $buf->length(0) >>.  Returns C<$self> for chaining.
 
 =method assign
 
@@ -188,11 +212,13 @@ and they are not an lvalue that alters the original.
 
   $byte_count= $buf->append_random($n_bytes);
   $byte_count= $buf->append_random($n_bytes, NONBLOCK);
+  $byte_count= $buf->append_random($n_bytes, 'NONBLOCK');
 
-Append N cryptographic-quality random bytes.  This uses either the c library 'getrandom' call
-with C<GRND_RANDOM>, or if that isn't available, it reads from /dev/random.  The NONBLOCK flag
-can be used to avoid blocking waiting on entropy.  NONBLOCK is ignored on Windows because it
-always returns the requested number of bytes and never blocks.
+Append N cryptographic-quality random bytes.  On POSIX systems, this uses either the C library
+C<getrandom> call with C<GRND_RANDOM>, or if that isn't available, it reads from C</dev/random>.
+The C<NONBLOCK> flag can be used to avoid blocking on insufficient entropy.  On Windows, this
+uses C<CryptGenRandom> and the flag has no effect because it always returns the requested number
+of bytes and never blocks.
 
 =method append_console_line
 
@@ -235,7 +261,8 @@ backed by the OS.
 This performs a low-level write from the buffer into a file handle.  It must be a real file
 handle with an underlying file descriptor (C<fileno>).  If the handle has pending bytes in its
 IO buffer, those are flushed first.  Like C<syswrite>, this returns C<undef> on an OS error,
-and otherwise returns the number of bytes written.  This ignores Perl I/O layers.
+and otherwise returns the number of bytes written.  It only makes one write attempt, which may
+be shorter than the requested C<$count>. This ignores Perl I/O layers.
 
 =method write_async
 
@@ -253,7 +280,7 @@ a type of handle that can't buffer it, this function will duplicate your file ha
 the secret and pass them to a background thread to do the writing.
 
 You can check the status or wait for its completion using the
-L<Crypt::SecretBuffer::AsyncResult|$async_result> object.
+L<$async_result|Crypt::SecretBuffer::AsyncResult> object.
 
 =method as_pipe
 
@@ -275,28 +302,6 @@ sub as_pipe {
    close($w); # XS dups the file handle if it is writing async from a thread
    return $r;
 }
-
-=head1 EXPORTS
-
-=over
-
-=item AT_LEAST
-
-Parameter for the setting capacity.
-
-=item NONBLOCK
-
-Parameter for append_random, if you are worried about blocking on lack of entropy on Linux.
-
-=item secret_buffer
-
-Shorthand function for calling L</new>.
-
-=item secret
-
-Shorthand function for calling L</new>.
-
-=back
 
 =head1 C API
 
