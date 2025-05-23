@@ -352,7 +352,9 @@ and initialize them:
   BOOT:
     SECRET_BUFFER_IMPORT_FUNCTION_POINTERS
 
-The complete documentation is found in SecretBuffer.h, but here is a synopsis:
+The complete documentation is found in
+L<SecretBuffer.h|https://metacpan.org/dist/Crypt-SecretBuffer/source/SecretBuffer.h>,
+but here is a synopsis:
 
 =over
 
