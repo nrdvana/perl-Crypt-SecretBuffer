@@ -76,7 +76,7 @@ bootstrap Crypt::SecretBuffer;
 {
    package Crypt::SecretBuffer::Exports;
    use Exporter 'import';
-   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret NONBLOCK );
+   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret NONBLOCK AT_LEAST );
    sub secret_buffer {
       Crypt::SecretBuffer->new(@_)
    }
@@ -99,6 +99,11 @@ If you pass one value to the constructor, it L</assign>s that to the buffer.  If
 of key/value pairs, it assigns those attributes, such as C<< ->new(capacity => 20) >>.
 Technically it just calls each key as a method with the value as a single argument, so you could
 also do things like C<< ->new(append_random => 16) >>.
+
+=constructor secret_buffer / secret
+
+The functions C<secret_buffer> and C<secret> can be exported from this module as a shorthand
+for C<< Crypt::SecretBuffer->new(...) >>.
 
 =cut
 
@@ -282,6 +287,14 @@ Parameter for the setting capacity.
 =item NONBLOCK
 
 Parameter for append_random, if you are worried about blocking on lack of entropy on Linux.
+
+=item secret_buffer
+
+Shorthand function for calling L</new>.
+
+=item secret
+
+Shorthand function for calling L</new>.
 
 =back
 
