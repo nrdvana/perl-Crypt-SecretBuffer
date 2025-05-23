@@ -29,7 +29,7 @@ subtest 'child receives secret' => sub {
 
 subtest 'IPC::Run /dev/fd notation' => sub {
    skip_all('IPC::Run or /dev/fd unsupported')
-      unless eval { require IPC::Run; 1 } && -e '/dev/fd/0';
+      unless eval { require IPC::Run; 1 } && -e '/proc/self/fd';
    my $buf = Crypt::SecretBuffer->new('ipc run secret');
    my $echoed = '';
    IPC::Run::run([ 'cat', '/dev/fd/3' ], '1>', \$echoed, '3<', $buf->as_pipe);

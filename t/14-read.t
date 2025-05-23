@@ -17,14 +17,17 @@ subtest 'append_read basic' => sub {
 
 
 subtest 'append_read NONBLOCK' => sub {
-    my ($r,$w)= pipe_with_data('x');
-    $r->blocking(0);
-    my $buf = Crypt::SecretBuffer->new;
-    my $n = $buf->append_read($r,1);
-    ok($n==1,'one byte');
-    $n = $buf->append_read($r,1);
-    ok($n==0 || ($n==-1 && $!{EAGAIN}), 'no data available');
-    close $r; close $w;
+   skip_all "Nonblocking doesn't work on WIn32"
+      if $^O eq 'MSWin32';
+
+   my ($r,$w)= pipe_with_data('x');
+   $r->blocking(0);
+   my $buf = Crypt::SecretBuffer->new;
+   my $n = $buf->append_read($r,1);
+   ok($n==1,'one byte');
+   $n = $buf->append_read($r,1);
+   ok($n==0 || ($n==-1 && $!{EAGAIN}), 'no data available');
+   close $r; close $w;
 };
 
 done_testing;

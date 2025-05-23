@@ -49,7 +49,7 @@ typedef DWORD syserror_type;
 #define GET_SYSERROR(x) ((x)= GetLastError())
 #define SET_SYSERROR(x) SetLastError(x)
 
-static void croak_with_syserror(const char *prefix, DWORD err_code) {
+static void croak_with_syserror(const char *prefix, DWORD error_code) {
    char message_buffer[512];
    DWORD length;
 
@@ -83,7 +83,10 @@ static bool disable_console_echo(int fd, console_state *prev_state) {\
    return SetConsoleMode(hConsole, new_mode);
 }
 
-static bool restore_console_state(HANDLE hConsole, console_state *prev_state) {
+static bool restore_console_state(int fd, console_state *prev_state) {
+   HANDLE hConsole= fd >= 0? (HANDLE)_get_osfhandle(fd) : INVALID_HANDLE_VALUE;
+   if (hConsole == INVALID_HANDLE_VALUE || GetFileType(hConsole) != FILE_TYPE_CHAR)
+      return false;
    return SetConsoleMode(hConsole, *prev_state);
 }
 
@@ -138,12 +141,12 @@ static void* memmem(
 ) {
    const char *p= (const char*) haystack;
    const char *lim= p + haystacklen - needlelen;
-   char first_ch= needle[0];
+   char first_ch= *(char*)needle;
    while (p < lim) {
       if (*p == first_ch) {
          // Check each position for the needle
          if (memcmp(p, needle, needlelen) == 0)
-            return p;
+            return (void*)p;
       }
       ++p;
    }
@@ -324,7 +327,7 @@ void secret_buffer_set_len(secret_buffer *buf, size_t new_len) {
 
 /* This is just exposing the wipe function of this library for general use.
  * It will be OPENSSL_cleanse if openssl (and headers) were available when this package was
- * compiled, or a simple 'explicit_bzero' or 'bzero' otherwise.
+ * compiled, or a simple 'explicit_bzero' or 'Zero' otherwise.
  */
 void secret_buffer_wipe(char *buf, size_t len) {
 #if defined WIN32
@@ -333,7 +336,7 @@ void secret_buffer_wipe(char *buf, size_t len) {
    explicit_bzero(buf, len);
 #else
    /* this ought to be sufficient anyway because its within an extern function */
-   bzero(buf, len);
+   Zero(buf, len, char);
 #endif
 }
 
@@ -410,8 +413,13 @@ IV secret_buffer_append_sysread(secret_buffer *buf, PerlIO *stream, size_t count
       DWORD bytes_read;
       if (hFile == INVALID_HANDLE_VALUE)
          croak("Handle has no system file descriptor");
-      if (!ReadFile(hFile, buf->data + buf->len, (DWORD)count, &bytes_read, NULL))
+      if (!ReadFile(hFile, buf->data + buf->len, (DWORD)count, &bytes_read, NULL)) {
+         /* POSIX only gives EPIPE to the writer, the reader gets a 0 read to indicate EOF.
+          * Win32 gives this error to the reader instead of a 0 read. */
+         if (GetLastError() == ERROR_BROKEN_PIPE)
+            return 0;
          return -1;
+      }
       secret_buffer_set_len(buf, buf->len + bytes_read);
       return bytes_read;
    }
@@ -596,7 +604,7 @@ secret_buffer_async_result* secret_buffer_async_result_from_magic(SV *obj, int f
 secret_buffer_async_result *secret_buffer_async_result_new(int fd, secret_buffer *buf, size_t ofs, size_t count) {
    secret_buffer_async_result *result= (secret_buffer_async_result *)
       malloc(sizeof(secret_buffer_async_result) + count);
-   bzero(result, sizeof(secret_buffer_async_result) + count);
+   Zero(((char*)result), sizeof(secret_buffer_async_result) + count, char);
 #ifdef WIN32
    InitializeCriticalSection(&result->cs);
    /* Duplicate the file handle for the thread */
@@ -605,7 +613,7 @@ secret_buffer_async_result *secret_buffer_async_result_new(int fd, secret_buffer
             0, FALSE, DUPLICATE_SAME_ACCESS)
       ) {
          free(result);
-         croak_with_syserr("DuplicateHandle", GetLastError());
+         croak_with_syserror("DuplicateHandle", GetLastError());
       }
    } else {
       result->fd= INVALID_HANDLE_VALUE;
@@ -616,7 +624,7 @@ secret_buffer_async_result *secret_buffer_async_result_new(int fd, secret_buffer
       if (result->readyEvent) CloseHandle(result->readyEvent);
       CloseHandle(result->fd);
       free(result);
-      croak_with_syserr("CreateEvent", GetLastError());
+      croak_with_syserror("CreateEvent", GetLastError());
    }
 #else /* POSIX */
    result->fd= fd >= 0? dup(fd) : -1;
@@ -724,11 +732,11 @@ bool secret_buffer_async_result_recv(secret_buffer_async_result *result, IV time
    bool ready= false;
    // Wait for the event with timeout
 #ifdef WIN32
-   DWORD result = WaitForSingleObject(result->readyEvent, timeout_msec < 0? WAIT_INFINITE : timeout_msec);
-   if (result == WAIT_TIMEOUT)
+   DWORD ret = WaitForSingleObject(result->readyEvent, timeout_msec < 0? INFINITE : timeout_msec);
+   if (ret == WAIT_TIMEOUT)
       return false;
-   if (result != WAIT_OBJECT_0)
-      croak_with_syserr("WaitForSingleObject", GetLastError());
+   if (ret != WAIT_OBJECT_0)
+      croak_with_syserror("WaitForSingleObject", GetLastError());
    ready= true;
    ASYNC_RESULT_MUTEX_LOCK(result);
 #else
@@ -864,13 +872,13 @@ IV secret_buffer_write_async(secret_buffer *buf, PerlIO *fh, IV offset, IV count
          DWORD bytesWritten, lastError;
          BOOL success;
 
-         if (!GetNamedPipeHandleState(hFile, &origPipeMode, NULL, NULL, NULL, NULL, 0)) {
-            croak_with_syserr("GetNamedPipeHandleState", GetLastError());
+         if (!GetNamedPipeHandleState(hFile, &origPipeMode, NULL, NULL, NULL, NULL, 0))
+            croak_with_syserror("GetNamedPipeHandleState", GetLastError());
          if (!(origPipeMode & PIPE_NOWAIT)) {
             // Set pipe to non-blocking mode temporarily
             DWORD nonBlockMode = PIPE_NOWAIT;
             if (!SetNamedPipeHandleState(hFile, &nonBlockMode, NULL, NULL))
-               croak_with_syserr("SetNamedPipeHandleState", GetLastError());
+               croak_with_syserror("SetNamedPipeHandleState", GetLastError());
          }
 
          // Try nonblocking write
@@ -901,8 +909,8 @@ IV secret_buffer_write_async(secret_buffer *buf, PerlIO *fh, IV offset, IV count
          0,                      /* default creation flags */
          NULL);                  /* receive thread identifier */
       if (result->threadHandle == NULL) {
-         secret_buffer_async_result_release(result);
-         croak_with_syserr("Failed to create thread", GetLastError());
+         secret_buffer_async_result_release(result, false);
+         croak_with_syserror("Failed to create thread", GetLastError());
       }
       /* make sure thread starts and takes ownership of its refcount */
       WaitForSingleObject(result->startEvent, INFINITE);
