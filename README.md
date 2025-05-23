@@ -25,8 +25,8 @@ or from CPAN:
 
 ### Developing
 
-However if you're trying to build from a fresh Git checkout, you'll need
-the Dist::Zilla tool (and many plugins) to create the Makefile.PL
+However, if you're trying to build from a fresh Git checkout, you'll need
+the Dist::Zilla tool (and many plugins) to create the Makefile.PL.
 
     cpanm Dist::Zilla
     dzil authordeps --missing | cpanm
@@ -34,10 +34,10 @@ the Dist::Zilla tool (and many plugins) to create the Makefile.PL
 
 While Dist::Zilla takes the busywork and mistakes out of module authorship,
 it fails to address the need of XS authors to easily compile XS projects
-and run single testcases, rather than the whole test suite.  For this, you
+and run single test cases rather than the whole test suite.  For this, you
 might find the following script handy:
 
-    ./dzil-prove t/01-ctor.t  # or any other testcase
+    ./dzil-prove t/01-ctor.t  # or any other test case
 
 which runs "dzil build" to get a clean dist, then enters the build directory
 and runs "perl Makefile.PL" to compile the XS, then "prove -lvb t/01-ctor.t".
