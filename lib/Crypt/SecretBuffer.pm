@@ -175,6 +175,29 @@ Erases the buffer.  Equivalent to C<< $buf->length(0) >>.  Returns C<$self> for 
 
 Assign a value to the buffer.  Returns C<$self>, for chaining.
 
+=attribute stringify_mask
+
+  $buf->stringify_mask;           # "[REDACTED]"
+  $buf->stringify_mask("*****");  # now stringifies as "*****"
+  $buf->stringify_mask(undef);    # exposes secret
+
+Get or set the stringification mask.  Setting it to C<undef> causes L</stringify> to expose the
+secret.  In order to restore the default C<"[REDACTED]"> you have to delete the attribute:
+C<< delete $buf->{stringify_mask} >>.  This attribute is mainly intended to allow cusomizing the
+mask during the constructor.  The preferred way to expose the secret is with C<local> on the
+hash key directly.
+
+=cut
+
+sub stringify_mask {
+   my $self= shift;
+   if (@_) {
+      $self->{stringify_mask}= shift;
+      return $self;
+   }
+   $self->{stringify_mask}
+}
+
 =method stringify
 
   $buf->stringify;               # returns "[REDACTED]"
