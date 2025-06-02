@@ -5,12 +5,14 @@
 #define NEED_newSVpvn_share
 #include "ppport.h"
 
-#ifdef HAVE_STDBOOL
-  #include <stdbool.h>
-#else
-  #define bool int
-  #define true 1
-  #define false 0
+#ifndef HAVE_NATIVE_BOOL
+   #ifdef HAVE_STDBOOL
+      #include <stdbool.h>
+   #else
+      #define bool int
+      #define true 1
+      #define false 0
+   #endif
 #endif
 
 #include "SecretBuffer.h"

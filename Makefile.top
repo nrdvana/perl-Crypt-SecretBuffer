@@ -31,6 +31,7 @@ sub check_lib_and_define {
          # Just take the address of it, to verify it gets linked
          function => qq{void (*fn)()= (void(*)()) $opts{fn}; return fn != NULL;},
       ) : ()),
+      ($opts{function}? ( function => $opts{function} ) : ()),
       ($opts{h}? ( header => $opts{h} ) : ()),
       ($opts{lib}? ( lib => $opts{lib} ) : ()),
       incpath  => \@incpath,
@@ -39,8 +40,10 @@ sub check_lib_and_define {
    )) {
       warn "Found ".($opts{fn}||$opts{h}||$opts{lib});
       push @have, $macro;
+      return 1;
    } else {
       warn "Don't have ".($opts{fn}||$opts{h}||$opts{lib});
+      return 0;
    }
 }
 
@@ -49,11 +52,12 @@ check_lib_and_define(MINCORE   => fn => 'mincore',    h => 'sys/mman.h');
 check_lib_and_define(GETRANDOM => fn => 'getrandom',  h => 'sys/random.h');
 check_lib_and_define(STDBOOL   =>                     h => 'stdbool.h');
 if ($^O ne 'MSWin32') { # none available on windows, and check_lib giving false positives...
+   check_lib_and_define(NATIVE_BOOL    => function => 'bool x= true; return x == false;');
    check_lib_and_define(EXPLICIT_BZERO => fn => 'explicit_bzero', h => 'string.h');
    check_lib_and_define(MEMMEM         => fn => 'memmem',         h => 'string.h');
 }
 
-$dep->set_libs(join ' ', (map "-L$_", @libpath))
+$dep->set_libs(join ' ', map "-L$_", @libpath)
    if @libpath;
 $dep->set_inc(join ' ', map "-I$_", @incpath)
    if @incpath;
@@ -61,6 +65,7 @@ $dep->install('SecretBuffer.h', 'SecretBufferManualLinkage.h');
 $dep->add_xs('SecretBuffer.xs');
 $dep->add_pm(map { my $n= $_; $n =~ s/^lib/\$(INST_LIB)/; $_ => $n } <lib/*/*.pm>, <lib/*/*/*.pm>);
 $dep->add_typemaps('typemap');
+$dep->save_config('InstallFiles.pm');
 
 sub MY::postamble {
    return <<LITERAL;
