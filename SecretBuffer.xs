@@ -1297,7 +1297,8 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
          /* copy anything beyond the insertion point to its new location */
          if (tail_len)
             Move(sub_start + count, sub_start + repl_len, tail_len, unsigned char);
-         Copy(repl_src, sub_start, repl_len, unsigned char);
+         if (repl_len)
+            Copy(repl_src, sub_start, repl_len, unsigned char);
          buf->len += len_diff;
       }
       /* If void context, return nothing.  Else return the substr */
