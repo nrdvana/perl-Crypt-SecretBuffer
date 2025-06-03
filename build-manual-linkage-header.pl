@@ -12,6 +12,11 @@ while (<STDIN>) {
    }
 }
 
+if (@ARGV == 1 && $ARGV[0] eq '--list-exports') {
+   print "$_->{name}\n" for @api;
+   exit 0;
+}
+
 $"= "\n";
 print <<END;
 #ifndef SECRET_BUFFER_MANUAL_LINKAGE_H

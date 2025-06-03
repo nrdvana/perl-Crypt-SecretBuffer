@@ -68,7 +68,7 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util ();
-use parent qw( DynaLoader );
+use parent qw( DynaLoader Crypt::SecretBuffer::Install::Files );
 use overload '""' => \&stringify;
 
 sub dl_load_flags {0x01} # Share extern symbols with other modules
