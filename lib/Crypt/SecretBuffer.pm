@@ -68,7 +68,7 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util ();
-use parent qw( DynaLoader Crypt::SecretBuffer::Install::Files );
+use parent qw( DynaLoader );
 use overload '""' => \&stringify;
 
 sub dl_load_flags {0x01} # Share extern symbols with other modules
@@ -113,6 +113,20 @@ Shorthand function for calling L</new>.
 sub import {
    splice(@_, 0, 1, 'Crypt::SecretBuffer::Exports');
    goto \&Crypt::SecretBuffer::Exports::import;
+}
+
+sub Inline {
+   require Crypt::SecretBuffer::Install::Files;
+   my $vars= Crypt::SecretBuffer::Install::Files->Inline(@_[1..$#_]);
+   (my $incpath= $INC{'Crypt/SecretBuffer/Install/Files.pm'}) =~ s,[^/]+$,,;
+   (my $libpath= $incpath) =~ s,Crypt/SecretBuffer,auto/Crypt/SecretBuffer,;
+   $vars->{INC}= "-I$incpath $vars->{INC}";
+   $vars->{LIBS}= "-L$libpath -lSecretBuffer.a $vars->{LIBS}";
+   $vars->{TYPEMAPS}= [ @{$vars->{TYPEMAPS}} ];
+   for (@{$vars->{TYPEMAPS}}) {
+      $_= "$incpath/$_" unless m,/,;
+   }
+   return $vars;
 }
 
 =constructor new
@@ -328,10 +342,9 @@ sub as_pipe {
 
 =head1 C API
 
-Since this module is somewhat more intended for XS than Perl users, I'm documenting the
-internal C API here.
-
-First, your XS module should use L<ExtUtils::Depends> to depend on the C API of this module:
+This module is intended for C code as much as it is for Perl code.  To write an XS module that
+uses SecretBuffer, your XS module should use L<ExtUtils::Depends> to add the headers and linkage
+needed for the C API:
 
   my $dep= ExtUtils::Depends->new('Your::Module', 'Crypt::SecretBuffer');
   ...
@@ -352,104 +365,20 @@ and initialize them:
   BOOT:
     SECRET_BUFFER_IMPORT_FUNCTION_POINTERS
 
-The complete documentation is found in
+The complete API documentation is found in
 L<SecretBuffer.h|https://metacpan.org/dist/Crypt-SecretBuffer/source/SecretBuffer.h>,
-but here is a synopsis:
+but here is a quick example:
 
-=over
-
-=item struct secret_buffer
-
-  typedef struct {
-    char *data;
-    size_t len, capacity;
-    SV *stringify_sv;
-  } secret_buffer;
-
-=item secret_buffer_new
-
-  secret_buffer* secret_buffer_new(size_t capacity, SV **ref_out);
-
-Create a Crypt::SecretBuffer object, return the struct, optionally return the mortal ref.
-The struct lifespan is tied to the Crypt::SecretBuffer object.
-
-=item secret_buffer_from_magic
-
-  secret_buffer* secret_buffer_from_magic(SV *ref, int flags);
-
-Return the secret_buffer attached to the ref to a Crypt::SecretBuffer object.
-
-=item secret_buffer_alloc_at_least
-
-  void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity);
-
-Ensure the secret_buffer is allocated to at least min_capacity.
-
-=item secret_buffer_set_len
-
-  void secret_buffer_set_len(secret_buffer *buf, size_t new_len);
-
-Change the length of the "defined" range of the buffer.  Fill with 0 if it grows, clear with 0
-if it shrinks.
-
-=item secret_buffer_append_random
-
-  IV secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags);
-
-Grow buffer with N quality-random bytes.
-
-=item secret_buffer_append_sysread
-
-  IV secret_buffer_append_sysread(secret_buffer *buf, PerlIO *fh, size_t count);
-
-Run one system-level read() and append bytes to the buffer, returning -1 on error.
-
-=item secret_buffer_append_read
-
-  IV secret_buffer_append_read(secret_buffer *buf, PerlIO *fh, size_t count);
-
-Same as sysread, but first read from PerlIO buffer if it isn't empty.
-
-=item secret_buffer_append_console_line
-
-  int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *fh);
-
-Attempt to read one complete line of text from a TTY or Console with echo disabled.
-Returns 1 if and only if it got a whole line.  Returns 0 or -1 on EOF or error of the final
-read attempt.
-
-=item secret_buffer_syswrite
-
-  IV secret_buffer_syswrite(secret_buffer *buf, PerlIO *fh, IV offset, IV count);
-
-Perform one system-level write() from the buffer, returning -1 on error and number of bytes
-written otherwise.  Also flushes perl's output buffer before it starts.
-
-=item secret_buffer_write_async
-
-  IV secret_buffer_write_async(secret_buffer *buf, PerlIO *fh, IV offset, IV count, SV **ref_out);
-
-Attempt to load a range of bytes into a handle, and if it would block, spawn a thread to push
-the rest of the data into the pipe.  Returns 0 if thread spawned, and fills the optional ref_out
-variable (which you can omit) with a ref to a promise-like object.  Otherwise returns same as
-syswrite.
-
-=item secret_buffer_result_check
-
-  bool secret_buffer_result_check(SV *promise_ref, int timeout_msec, IV *wrote, IV *os_err);
-
-Check if the promise-like object of secret_buffer_write_async has resolved.  Returns bytes
-written and OS error code into the supplied (optional) references.
-
-=item secret_buffer_get_stringify_sv
-
-  SV* secret_buffer_get_stringify_sv(secret_buffer *buf);
-
-Return a magic SV which exposes the secret via GET magic.  Multiple calls return the same SV.
-The SV can safely be placed on the Perl stack, and becomes mortal if the secret_buffer is
-destroyed.
-
-=back
+  use Inline with => 'Crypt::SecretBuffer', C => <<END_C;
+  
+  int weak_checksum(secret_buffer *buf) {
+    int sum= 0;
+    for (int i= 0; i < buf->len; i++)
+      sum += buf->data[i];
+    return sum;
+  }
+  
+  END_C
 
 =cut
 1;
