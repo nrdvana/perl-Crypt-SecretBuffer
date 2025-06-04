@@ -12,8 +12,8 @@ while (<STDIN>) {
    }
 }
 
-if (@ARGV == 1 && $ARGV[0] eq '--list-exports') {
-   print "$_->{name}\n" for @api;
+if (@ARGV == 1 && $ARGV[0] eq '--list-prototypes') {
+   print "$_->{proto}\n" for @api;
    exit 0;
 }
 

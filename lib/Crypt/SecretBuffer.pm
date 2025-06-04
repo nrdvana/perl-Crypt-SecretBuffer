@@ -117,16 +117,7 @@ sub import {
 
 sub Inline {
    require Crypt::SecretBuffer::Install::Files;
-   my $vars= Crypt::SecretBuffer::Install::Files->Inline(@_[1..$#_]);
-   (my $incpath= $INC{'Crypt/SecretBuffer/Install/Files.pm'}) =~ s,[^/]+$,,;
-   (my $libpath= $incpath) =~ s,Crypt/SecretBuffer,auto/Crypt/SecretBuffer,;
-   $vars->{INC}= "-I$incpath $vars->{INC}";
-   $vars->{LIBS}= "-L$libpath -lSecretBuffer.a $vars->{LIBS}";
-   $vars->{TYPEMAPS}= [ @{$vars->{TYPEMAPS}} ];
-   for (@{$vars->{TYPEMAPS}}) {
-      $_= "$incpath/$_" unless m,/,;
-   }
-   return $vars;
+   goto \&Crypt::SecretBuffer::Install::Files::Inline;
 }
 
 =constructor new
