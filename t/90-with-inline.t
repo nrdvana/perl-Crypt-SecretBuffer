@@ -26,7 +26,7 @@ subtest test_inline_example => sub {
    if (ok(eval <<END_PM, 'compile inline example') )
 package TestSecretBufferWithInline;
 use Inline with => 'Crypt::SecretBuffer';
-use Inline C => <<END_C, libs => "-lSecretBuffer.a";
+use Inline C => <<END_C;
 
 #include <SecretBuffer.h>
 

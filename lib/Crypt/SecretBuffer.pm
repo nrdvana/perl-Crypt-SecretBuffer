@@ -344,32 +344,29 @@ needed for the C API:
     $dep->get_makefile_vars()
   );
 
-If you are on a GNU Libc platform which supports global symbol linkage (e.g. Linux, not Mac or
-Windows) all you need to do is use the header "SecretBuffer.h" and get to work.  If you want
-to compile on Mac or Windows, you also need to declare function pointer symbols for the exports
-and initialize them:
+You can also just use it with L<Inline::C> if you want to skip the hassle of an XS module:
 
-  #include "SecretBuffer.h"
-  SECRET_BUFFER_DECLARE_FUNCTION_POINTERS
-  SECRET_BUFFER_DEFINE_FUNCTION_POINTERS
-  ...
-  BOOT:
-    SECRET_BUFFER_IMPORT_FUNCTION_POINTERS
-
-The complete API documentation is found in
-L<SecretBuffer.h|https://metacpan.org/dist/Crypt-SecretBuffer/source/SecretBuffer.h>,
-but here is a quick example:
-
-  use Inline with => 'Crypt::SecretBuffer', C => <<END_C;
+  package TestSecretBufferWithInline;
+  use strict;
+  use warnings;
+  use Inline with => 'Crypt::SecretBuffer';
+  use Inline C => <<END_C;
   
-  int weak_checksum(secret_buffer *buf) {
-    int sum= 0;
-    for (int i= 0; i < buf->len; i++)
-      sum += buf->data[i];
-    return sum;
+  #include <SecretBuffer.h>
+  
+  int test(secret_buffer *buf) {
+    return buf->len;
   }
   
   END_C
+  
+  print test(Crypt::SecretBuffer->new(length => 10))."\n";
+  1;
+
+The complete API documentation is found in
+L<SecretBuffer.h|https://metacpan.org/dist/Crypt-SecretBuffer/source/SecretBuffer.h>
+but here is a quick example:
 
 =cut
+
 1;
