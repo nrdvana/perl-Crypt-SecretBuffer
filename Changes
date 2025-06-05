@@ -1,3 +1,8 @@
+Version 0.004 - 2025-06-05
+  - Add "Inline with => Crypt::SecretBuffer" support
+  - Tooling now provides C API from the XS shared lib as native exported symbols
+  - Fix failing assertion in substr()
+
 Version 0.003 - 2025-05-23
   - Make attribute accessor for stringify_mask
     Also allows stringify_mask to be specified in the constructor
