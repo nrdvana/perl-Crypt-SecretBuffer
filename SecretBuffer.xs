@@ -5,14 +5,12 @@
 #define NEED_newSVpvn_share
 #include "ppport.h"
 
-#ifndef HAVE_NATIVE_BOOL
-   #ifdef HAVE_STDBOOL
-      #include <stdbool.h>
-   #else
-      #define bool int
-      #define true 1
-      #define false 0
-   #endif
+#include "SecretBuffer_config.h"
+
+#ifndef HAVE_BOOL
+   #define bool int
+   #define true 1
+   #define false 0
 #endif
 
 #include "SecretBuffer.h"
@@ -48,7 +46,6 @@ static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
 \**********************************************************************************************/
 
 #ifdef WIN32
-#include <wincrypt.h>
 
 static size_t get_page_size() {
    SYSTEM_INFO sysInfo;
@@ -102,10 +99,6 @@ static bool restore_console_state(int fd, console_state *prev_state) {
 }
 
 #else /* not WIN32 */
-#include <pthread.h>
-#include <termios.h>
-#include <unistd.h>
-#include <fcntl.h>
 
 static size_t get_page_size() {
    long pagesize = sysconf(_SC_PAGESIZE);
@@ -136,10 +129,6 @@ static bool restore_console_state(int fd, console_state *prev_state) {
    return tcsetattr(fd, TCSAFLUSH, prev_state) == 0;
 }
 
-#endif
-
-#if HAVE_GETRANDOM
-#include <sys/random.h>
 #endif
 
 /* Shim for systems that lack memmem */
