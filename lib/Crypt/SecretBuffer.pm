@@ -365,7 +365,12 @@ You can also just use it with L<Inline::C> if you want to skip the hassle of an 
 
 The complete API documentation is found in
 L<SecretBuffer.h|https://metacpan.org/dist/Crypt-SecretBuffer/source/SecretBuffer.h>
-but here is a quick example:
+
+=head2 Reporting Security Vulnerabilities
+
+Security issues should not be reported on the bugtracker website.
+Please see F<SECURITY.md> for instructions how to report security
+vulnerabilities.
 
 =cut
 
