@@ -1,11 +1,13 @@
-use Test2::V0;
+use FindBin;
+use lib "$FindBin::Bin/lib";
+use Test2AndUtils;
 use Crypt::SecretBuffer qw( secret NONBLOCK );
 
 # This test attempts to verify that the random function fills the first and last byte
 # requested and no more or less.
 
 # fills with 0 by default
-my $buf= secret(capacity => 16);
+my $buf= secret(capacity => 16, stringify_mask => undef);
 
 # verify first and last bytes are not NUL.  This will fail 1/256 chance, so keep trying
 # until we are sure it isn't just chance.
@@ -28,7 +30,8 @@ is( $buf->length, 10, 'length' );
 # and if random call was overwriting beyond the requested range it would result in 1/256 chance
 # that the byte is not NUL.
 $buf->length(11);
-is( $buf->index("\0", 10), 10, 'byte beyond random range is zero' );
+is( $buf->index("\0", 10), 10, 'byte beyond random range is zero' )
+   or diag escape_nonprintable $buf;
 
 # A more interesting test might be to collect statistics about each byte, and ensure they
 # approach an even distribution, but this would take a bunch of CPU and time and possibly

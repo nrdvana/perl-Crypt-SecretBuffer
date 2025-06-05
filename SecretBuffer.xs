@@ -137,15 +137,23 @@ static void* memmem(
    const void *haystack, size_t haystacklen,
    const void *needle, size_t needlelen
 ) {
-   const char *p= (const char*) haystack;
-   const char *lim= p + haystacklen - needlelen;
-   char first_ch= *(char*)needle;
-   while (p < lim) {
-      if (*p == first_ch) {
-         if (memcmp(p, needle, needlelen) == 0)
-            return (void*)p;
+   if (!needle || !needlelen) {
+      return haystack;
+   }
+   else if (!haystack || !haystacklen) {
+      return NULL;
+   }
+   else {
+      const char *p= (const char*) haystack;
+      const char *lim= p + haystacklen - (needlelen - 1);
+      char first_ch= *(char*)needle;
+      while (p < lim) {
+         if (*p == first_ch) {
+            if (memcmp(p, needle, needlelen) == 0)
+               return (void*)p;
+         }
+         ++p;
       }
-      ++p;
    }
    return NULL;
 }
