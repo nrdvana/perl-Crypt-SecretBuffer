@@ -100,6 +100,7 @@ Shorthand function for calling L</new>.
 
 {
    package Crypt::SecretBuffer::Exports;
+
    use Exporter 'import';
    @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret NONBLOCK AT_LEAST );
    sub secret_buffer {

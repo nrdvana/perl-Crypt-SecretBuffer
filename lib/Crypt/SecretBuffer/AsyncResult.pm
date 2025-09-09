@@ -1,6 +1,7 @@
 package Crypt::SecretBuffer::AsyncResult;
-#ABSTRACT: Observe results of a write_async operation
-#VERSION
+# VERSION
+# ABSTRACT: Observe results of a write_async operation
+
 1;
 __END__
 
