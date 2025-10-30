@@ -20,6 +20,11 @@ package Crypt::SecretBuffer;
   
   undef $buf;             # no copies of password remain in memory.
 
+  # pass secret directly to a XS function without copying a scalar
+  use Crypt::SecretBuffer 'unmask_secrets_to';
+  unmask_secrets_to(\&c_function, $buf);
+  $buf->unmask_to(\&c_function)
+
 =head1 DESCRIPTION
 
 This module helps you protect a secret value from getting copied around unintentionally or
@@ -56,6 +61,10 @@ stringification of the buffer reveals the secret or not.  For instance:
     some_xs_function($buf);            # stringifies as the secret
   }
   say $buf;                            # stringifies as [REDACTED]
+
+or:
+
+  $buf->unmask_to(\&some_xs_function);
 
 There is no guarantee that the XS function in that example wouldn't make a copy of your secret,
 but this at least provides the secret buffer directly to the XS code that calls C<SvPV> without
@@ -94,6 +103,13 @@ Shorthand function for calling L</new>.
 
 Shorthand function for calling L</new>.
 
+=item unmask_secrets_to
+
+  unmask_secrets_to \&coderef, $arg1, $arg2, ...;
+
+Call a coderef with a list of arguments, and any argument which is a SecretBuffer will be
+replaced by a scalar referencing the actual secret.
+
 =back
 
 =cut
@@ -102,13 +118,15 @@ Shorthand function for calling L</new>.
    package Crypt::SecretBuffer::Exports;
 
    use Exporter 'import';
-   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret NONBLOCK AT_LEAST );
+   @Crypt::SecretBuffer::Exports::EXPORT_OK= qw( secret_buffer secret unmask_secrets_to
+      NONBLOCK AT_LEAST
+   );
    sub secret_buffer {
       Crypt::SecretBuffer->new(@_)
    }
-   *secret= *secret_buffer;
-   *NONBLOCK=  *Crypt::SecretBuffer::NONBLOCK;
-   *AT_LEAST=  *Crypt::SecretBuffer::AT_LEAST;
+   *secret=   *secret_buffer;
+   *NONBLOCK= *Crypt::SecretBuffer::NONBLOCK;
+   *AT_LEAST= *Crypt::SecretBuffer::AT_LEAST;
 }
 
 sub import {
@@ -218,6 +236,25 @@ SecretBuffer tries not to expose the secret, so the default behavior of this fun
 return the string C<< "[REDACTED]" >> or whatever custom string you store in C<stringify_mask>.
 If you set C<stringify_mask> to C<undef>, it exposes the secret.  You can use C<local> to limit
 the scope of this exposure.
+
+=method unmask_to
+
+  $buf->unmask_to(\&coderef);
+
+Pass the secret value as an argument to a code-ref.  If you want to prevent the secret from
+leaking into perl's heap, the coderef should be an XS function.  If you pass it to a perl
+function and load the parameter into a local variable, then it leaks into perl's heap.
+You *might* be OK if you pass it to a perl function and leave it in C<< @_ >> until passing it
+to an XS function.
+
+This is equivalent to, but more efficient than
+
+  {
+    local $buf->{stringify_mask}= undef;
+    coderef->($buf);
+  }
+
+See also: L</unmask_secrets_to>.
 
 =method index
 
