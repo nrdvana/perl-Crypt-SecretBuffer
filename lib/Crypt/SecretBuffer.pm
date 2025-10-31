@@ -71,6 +71,75 @@ but this at least provides the secret buffer directly to the XS code that calls 
 making a copy.  If an XS module is aware of Crypt::SecretBuffer, it can use a more official
 L</C API> that doesn't rely on perl stringification behavior.
 
+=head2 Supporting SecretBuffer Without a Dependency
+
+If you have a module where you'd like to optionally receive secrets via SecretBuffer objects,
+but don't want your module to depend on Crypt::SecretBuffer, here are some useful recipes:
+
+  # unmask a single variable with duck-typing
+  sub connect($self, $dsn, $user, $password) {
+    local $password->{stringify_mask}= undef
+      if blessed $password && $password->can('stringify_mask');
+    my $dbh= DBI->connect($dsn, $user, $password);
+    ...
+  }
+
+  # use unmask_secrets_to with a fallback if SecretBuffer is not installed
+  BEGIN {
+    eval 'use Crypt::SecretBuffer qw/unmask_secrets_to/; 1'
+    or eval 'sub unmask_secrets_to { shift->(@_) }'
+  }
+  sub connect($self, $dsn, $user, $password) {
+    my $dbh= unmask_secrets_to \&DBI::connect, $dsn, $user, $password;
+    ...
+  }
+
+  /*
+   * In C code, perform the 'local' technique and overloaded stringification
+   */
+  const char *actual_pass= NULL;
+  STRLEN actual_pass_len;
+  if (sv_isobject(password) && sv_derived_from(password, "Crypt::SecretBuffer")) {
+    HV *hv= (HV*) SvRV(password);
+    SV **svp= hv_fetchs(hv, "stringify_mask", 0);
+    if (svp) {
+      SAVESPTR(*svp);
+      *svp= &PL_sv_undef;
+    } else {
+      hv_stores(hv, "stringify_mask", newSVsv(&PL_sv_undef));
+      SAVEDELETE(hv, savepv("stringify_mask"), 14);
+    }
+  }
+  actual_pass= SvPV(password, actual_pass_len);
+
+  /*
+   * In C code, conditionally access the SecretBuffer C API
+   */
+  typedef struct {
+    char *data;
+    size_t len, capacity;
+    SV *stringify_sv;
+  } secret_buffer;
+  typedef secret_buffer* sb_from_magic_t(SV *ref, int flags);
+  
+  ...
+     const char *actual_pass= NULL;
+     STRLEN actual_pass_len;
+  
+     HV *secretbuffer_api = get_hv("Crypt::SecretBuffer::C_API", 0);
+     if (secretbuffer_api) { /* only becomes true after 'use Crypt::SecretBuffer;' */
+       SV **svp = hv_fetch(secretbuffer_api, "secret_buffer_from_magic", 24, 0);
+       sb_from_magic_t *sb_from_magic= svp && *svp? (sb_from_magic_t*) SvIV(*svp) : NULL;
+       secret_buffer *buf;
+       if (sb_from_magic && (buf= sb_from_magic(password, 0))) {
+         actual_pass= buf->data;
+         actual_pass_len= buf->len;
+       }
+     }
+     if (!actual_pass)
+       actual_pass= SvPV(password, actual_pass_len);
+  ...
+
 =cut
 
 use strict;
