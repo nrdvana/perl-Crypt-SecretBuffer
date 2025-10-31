@@ -19,7 +19,7 @@ package Crypt::SecretBuffer;
   );                      # without it ever being copied into a Perl scalar
   
   undef $buf;             # no copies of password remain in memory.
-
+  
   # pass secret directly to a XS function without copying a scalar
   use Crypt::SecretBuffer 'unmask_secrets_to';
   unmask_secrets_to(\&c_function, $buf);
@@ -76,7 +76,10 @@ L</C API> that doesn't rely on perl stringification behavior.
 If you have a module where you'd like to optionally receive secrets via SecretBuffer objects,
 but don't want your module to depend on Crypt::SecretBuffer, here are some useful recipes:
 
-  # unmask a single variable with duck-typing
+=over
+
+=item unmask a single variable with duck-typing
+
   sub connect($self, $dsn, $user, $password) {
     local $password->{stringify_mask}= undef
       if blessed $password && $password->can('stringify_mask');
@@ -84,7 +87,8 @@ but don't want your module to depend on Crypt::SecretBuffer, here are some usefu
     ...
   }
 
-  # use unmask_secrets_to with a fallback if SecretBuffer is not installed
+=item use unmask_secrets_to with a fallback if SecretBuffer is not installed
+
   BEGIN {
     eval 'use Crypt::SecretBuffer qw/unmask_secrets_to/; 1'
     or eval 'sub unmask_secrets_to { shift->(@_) }'
@@ -94,9 +98,8 @@ but don't want your module to depend on Crypt::SecretBuffer, here are some usefu
     ...
   }
 
-  /*
-   * In C code, perform the 'local' technique and overloaded stringification
-   */
+=item In C code, perform the 'local' technique and overloaded stringification
+
   const char *actual_pass= NULL;
   STRLEN actual_pass_len;
   if (sv_isobject(password) && sv_derived_from(password, "Crypt::SecretBuffer")) {
@@ -112,9 +115,8 @@ but don't want your module to depend on Crypt::SecretBuffer, here are some usefu
   }
   actual_pass= SvPV(password, actual_pass_len);
 
-  /*
-   * In C code, conditionally access the SecretBuffer C API
-   */
+=item In C code, conditionally access the SecretBuffer C API
+
   typedef struct {
     char *data;
     size_t len, capacity;
@@ -128,7 +130,7 @@ but don't want your module to depend on Crypt::SecretBuffer, here are some usefu
   
      HV *secretbuffer_api = get_hv("Crypt::SecretBuffer::C_API", 0);
      if (secretbuffer_api) { /* only becomes true after 'use Crypt::SecretBuffer;' */
-       SV **svp = hv_fetch(secretbuffer_api, "secret_buffer_from_magic", 24, 0);
+       SV **svp = hv_fetchs(secretbuffer_api, "secret_buffer_from_magic", 0);
        sb_from_magic_t *sb_from_magic= svp && *svp? (sb_from_magic_t*) SvIV(*svp) : NULL;
        secret_buffer *buf;
        if (sb_from_magic && (buf= sb_from_magic(password, 0))) {
@@ -139,6 +141,8 @@ but don't want your module to depend on Crypt::SecretBuffer, here are some usefu
      if (!actual_pass)
        actual_pass= SvPV(password, actual_pass_len);
   ...
+
+=back
 
 =cut
 
