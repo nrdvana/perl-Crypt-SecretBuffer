@@ -242,6 +242,7 @@ secret_buffer* secret_buffer_from_magic(SV *obj, int flags) {
 
    if (flags & SECRET_BUFFER_MAGIC_AUTOCREATE) {
       Newxz(buf, 1, secret_buffer);
+      buf->wrapper= sv;
       magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_magic_vtbl, (const char*) buf, 0);
 #ifdef USE_ITHREADS
       magic->mg_flags |= MGf_DUP;
@@ -1038,10 +1039,12 @@ int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
    secret_buffer *clone, *orig = (secret_buffer *)mg->mg_ptr;
    PERL_UNUSED_VAR(param);
    Newxz(clone, 1, secret_buffer);
+   clone->wrapper= mg->mg_obj;
    mg->mg_ptr = (char *)clone;
-   secret_buffer_set_len(clone, orig->len);
-   if (orig->len)
-      memcpy(clone->data, orig->data, orig->capacity < clone->capacity? orig->capacity : clone->capacity);
+   secret_buffer_realloc(clone, orig->capacity);
+   if (orig->capacity)
+      memcpy(clone->data, orig->data, orig->capacity);
+   clone->len= orig->len;
    return 0;
 }
 #endif
@@ -1147,7 +1150,7 @@ IV scan_mapped_memory_in_range(uintptr_t p, uintptr_t lim, const char *needle, s
 /**********************************************************************************************\
 * Crypt::SecretBuffer API
 \**********************************************************************************************/
-MODULE = Crypt::SecretBuffer                     PACKAGE = Crypt::SecretBuffer
+MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer
 PROTOTYPES: DISABLE
 
 void
@@ -1433,7 +1436,7 @@ _count_matches_in_mem(buf, addr0, addr1)
    OUTPUT:
       RETVAL
 
-MODULE = Crypt::SecretBuffer                     PACKAGE = Crypt::SecretBuffer::Exports
+MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::Exports
 
 void
 unmask_secrets_to(coderef, ...)
@@ -1457,7 +1460,7 @@ unmask_secrets_to(coderef, ...)
          croak_sv(ERRSV);
       XSRETURN(count);
 
-MODULE = Crypt::SecretBuffer                     PACKAGE = Crypt::SecretBuffer::AsyncResult
+MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::AsyncResult
 
 void
 wait(result, timeout=-1)

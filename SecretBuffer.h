@@ -1,9 +1,17 @@
 #ifndef CRYPT_SECRETBUFFER_H
 
+/* 'data' is an array of bytes allocated to 'capacity'.
+ * 'len' is how much of the buffer is holding data.  All bytes beyond are zeros
+ * 'stringify_sv' is initially NULL, but exists after the first stringify event
+ * 'wrapper' is the object to which this struct is attached (via Magic)
+ *   and will normally be an HV, but could potentially be other things if
+ *   'secret_buffer_from_magic' was called on a non-HV ref with AUTOCREATE flag
+ */
 typedef struct {
    char *data;
    size_t len, capacity;
    SV *stringify_sv;
+   SV *wrapper;
 } secret_buffer;
 
 /* Create a new Crypt::SecretBuffer object with a mortal ref and return its secret_buffer
