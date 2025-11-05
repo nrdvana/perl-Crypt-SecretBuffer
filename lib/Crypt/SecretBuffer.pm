@@ -442,6 +442,78 @@ sub as_pipe {
    return $r;
 }
 
+=method load_file
+
+  $buf= secret(load_file => $path);
+  # or
+  $buf->load_file($path);
+
+This is a simple wrapper around C<open> and C<append_sysread> and C<close>, checking for errors
+at each step.
+
+=cut
+
+sub load_file {
+   my ($self, $path)= @_;
+   open my $fh, '<', $path or croak "open($path): $!";
+   my $blocksize= -s $path;
+   while (1) {
+      my $got= $self->append_sysread($fh, $blocksize);
+      defined $got or croak "sysread($path): $!";
+      last if $got == 0;
+      # should have read the whole thing first try, but file could be changing, so keep going
+      # at 16K intervals until EOF.
+      $blocksize= 16*1024 if $blocksize > 16*1024;
+   }
+   close($fh) or croak "close($path): $!";
+   return $self;
+}
+
+=method save_file
+
+  $buf->save_file($path);
+  $buf->save_file($path, $overwrite); # bool, overwrite existing file
+  $buf->save_file($path, 'rename'); # overwrite using 'rename' of a temp file
+
+This writes the contents of the buffer to a file at C<$path>, checking for errors at each step.
+The file must not previously exist unless C<$overwrite> is true.  C<$overwrite> may be the
+special value C<'rename'> to write to a temp file and then rename it into place.
+
+=cut
+
+sub save_file {
+   my ($self, $path, $overwrite)= @_;
+   my $fh;
+   my $cur_path= "$path";
+   if (!$overwrite) {
+      -e $path and croak "File '$path' already exists";
+      # I don't think there's an atomic way to create-without-overwrite in perl, so try this..
+      open $fh, '>>', $path or croak "open($path): $!";
+      croak "File '$path' already exists"
+         if -s $fh > 0;
+   } elsif ($overwrite eq 'rename') {
+      require File::Temp;
+      require File::Spec;
+      my ($vol, $dir, $file)= File::Spec->splitpath($path);
+      $fh= File::Temp->new(DIR => File::Spec->catpath($vol, $dir, ''));
+      $cur_path= "$fh";
+   } else {
+      open $fh, '>', $path or croak "open($path): $!";
+   }
+   my $wrote= 0;
+   while ($wrote < $self->length) {
+      my $w= $self->syswrite($fh, $self->length - $wrote);
+      defined $w or croak "syswrite($cur_path): $!";
+      $wrote += $w;
+   }
+   close($fh) or croak "close($cur_path): $!";
+   if ($overwrite erq 'rename') {
+      rename($cur_path, $path) or croak "rename($cur_path -> $path): $!";
+      $fh->unlink_on_destroy(0);
+   }
+   return $self;
+}
+
 =head1 C API
 
 This module is intended for C code as much as it is for Perl code.  To write an XS module that
