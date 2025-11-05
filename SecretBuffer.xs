@@ -4,6 +4,7 @@
 #define NEED_mg_findext
 #define NEED_newSVpvn_share
 #include "ppport.h"
+#include <stddef.h>
 
 #include "SecretBuffer_config.h"
 
@@ -167,10 +168,12 @@ static void* memmem(
 static int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
 static int secret_buffer_stringify_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
 static int secret_buffer_async_result_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
+static int secret_buffer_ini_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
 #else
 #define secret_buffer_magic_dup 0
 #define secret_buffer_stringify_magic_dup 0
 #define secret_buffer_async_result_magic_dup 0
+#define secret_buffer_ini_magic_dup 0
 #endif
 
 static int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg);
@@ -205,6 +208,17 @@ static MGVTBL secret_buffer_async_result_magic_vtbl = {
    secret_buffer_async_result_magic_free,
    NULL,
    secret_buffer_async_result_magic_dup
+#ifdef MGf_LOCAL
+   ,NULL
+#endif
+};
+
+static int secret_buffer_ini_magic_free(pTHX_ SV *sv, MAGIC *mg);
+static MGVTBL secret_buffer_ini_magic_vtbl = {
+   NULL, NULL, NULL, NULL,
+   secret_buffer_ini_magic_free,
+   NULL,
+   secret_buffer_ini_magic_dup
 #ifdef MGf_LOCAL
    ,NULL
 #endif
@@ -784,7 +798,6 @@ bool secret_buffer_result_check(SV *promise_ref, int timeout_msec, IV *wrote, IV
       timeout_msec, wrote, os_err);
 }
 
-
 /* Worker thread for background writing.
  * This thread receives a copy of the secret in the secret_buffer_async_result
  * (along with a duplicated file handle) and it uses blocking writes to push the
@@ -1018,9 +1031,9 @@ SV* secret_buffer_get_stringify_sv(secret_buffer *buf) {
    return sv;
 }
 
-/*
- * SecretBuffer Magic
- */
+/**********************************************************************************************\
+* SecretBuffer magic
+\**********************************************************************************************/
 
 int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg) {
    secret_buffer *buf= (secret_buffer*) mg->mg_ptr;
@@ -1055,6 +1068,62 @@ typedef secret_buffer  *maybe_secret_buffer;
 
 /* flag for capacity */
 #define SECRET_BUFFER_AT_LEAST 1
+
+/**********************************************************************************************\
+* SecretBuffer INI magic
+\**********************************************************************************************/
+
+#include "secret_buffer_ini.c"
+
+secret_buffer_ini* secret_buffer_ini_from_magic(SV *obj, int flags) {
+   SV *sv;
+   MAGIC *magic;
+   secret_buffer_ini *parse;
+
+   if ((!obj || !SvOK(obj)) && (flags & SECRET_BUFFER_MAGIC_UNDEF_OK))
+      return NULL;
+
+   if (!sv_isobject(obj)) {
+      if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
+         croak("Not an object");
+      return NULL;
+   }
+   sv = SvRV(obj);
+   if (SvMAGICAL(sv) && (magic = mg_findext(sv, PERL_MAGIC_ext, &secret_buffer_ini_magic_vtbl)))
+      return (secret_buffer_ini*) magic->mg_ptr;
+
+   if (flags & SECRET_BUFFER_MAGIC_AUTOCREATE) {
+      if (SvTYPE(sv) != SVt_PVHV)
+         croak("Not a blessed hashref");
+      Newx(parse, 1, secret_buffer_ini);
+      secret_buffer_ini_init(parse);
+      parse->wrapper= (HV*) sv;
+      magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_ini_magic_vtbl, (const char*) parse, 0);
+#ifdef USE_ITHREADS
+      magic->mg_flags |= MGf_DUP;
+#endif
+      return parse;
+   }
+   if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
+      croak("Object lacks 'secret_buffer_ini' magic");
+   return NULL;
+}
+
+int secret_buffer_ini_magic_free(pTHX_ SV *sv, MAGIC *mg) {
+   secret_buffer_ini *parse= (secret_buffer_ini *) mg->mg_ptr;
+   secret_buffer_ini_destroy(parse);
+   Safefree(parse);
+   return 0;
+}
+
+#ifdef USE_ITHREADS
+int secret_buffer_ini_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *p) {
+   secret_buffer_ini *clone= secret_buffer_ini_clone((secret_buffer_ini*)mg->mg_ptr);
+   mg->mg_ptr = (char *) clone;
+   PERL_UNUSED_VAR(p);
+   return 0;
+}
+#endif
 
 /* Convenience to convert string parameters to the corresponding integer so that Perl-side
  * doesn't always need to import the flag constants.
@@ -1478,8 +1547,156 @@ wait(result, timeout=-1)
          XSRETURN(0);
       }
 
+MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::INI
+
+void
+pos(ini, val=NULL)
+   secret_buffer_ini *ini
+   SV *val
+   ALIAS:
+      section_ofs = 1
+      section_len = 2
+      key_ofs     = 3
+      key_len     = 4
+      value_ofs   = 5
+      value_len   = 6
+      utf8        = 7
+      opt_hash_comment = 8
+      opt_inline_comment = 9
+   INIT:
+      size_t *stfield= NULL;
+      bool *bfield= NULL;
+   PPCODE:
+      switch (ix) {
+      case 0: stfield= &ini->pos; break;
+      case 1: stfield= &ini->section_ofs; break;
+      case 2: stfield= &ini->section_len; break;
+      case 3: stfield= &ini->key_ofs; break;
+      case 4: stfield= &ini->key_len; break;
+      case 5: stfield= &ini->value_ofs; break;
+      case 6: stfield= &ini->value_len; break;
+      case 7: bfield=  &ini->utf8; break;
+      case 8: bfield=  &ini->opt_hash_comment; break;
+      case 9: bfield=  &ini->opt_inline_comment; break;
+      default: croak("BUG");
+      }
+      if (val) {
+         if (stfield) *stfield= SvUV(val);
+         else if (bfield) *bfield= SvTRUE(val);
+         // Reset the error if 'pos' changes
+         if (ix == 0) ini->err= NULL;
+         // ST(0) remains pointed at INI object
+      }
+      else
+         ST(0)= stfield? sv_2mortal(newSVuv(*stfield))
+            : bfield? (*bfield? &PL_sv_yes : &PL_sv_no)
+            : &PL_sv_undef;
+      XSRETURN(1);
+
+void
+context(ini)
+   secret_buffer_ini *ini
+   INIT:
+      SV **buf_p= hv_fetchs(ini->wrapper, "buffer", 0);
+      secret_buffer *buf= buf_p && *buf_p? secret_buffer_from_magic(*buf_p, 0) : NULL;
+   PPCODE:
+      if (buf) {
+         int row= 1, col= 1;
+         char *pos= buf->data,
+              *lim= buf->data + (ini->pos < buf->len? ini->pos : buf->len),
+              *line= buf->data;
+         // Count lines
+         while (pos < lim) {
+            if (*pos++ == '\n') {
+               row++;
+               line= pos;
+            }
+         }
+         // If UTF-8, count chars
+         if (ini->utf8) {
+            while (line < lim) {
+               if ((*line & 0xFF) < 0x80 || (*line & 0xC0) != 0x80)
+                  col++;
+               line++;
+            }
+         } else {
+            col= lim - line;
+         }
+         EXTEND(SP, 2);
+         PUSHs(sv_2mortal(newSViv(row)));
+         PUSHs(sv_2mortal(newSViv(col)));
+      }
+
+bool
+parse_next(ini)
+   secret_buffer_ini *ini
+   INIT:
+      SV **sv_p= hv_fetchs(ini->wrapper, "buffer", 0);
+      secret_buffer *buf= sv_p && *sv_p? secret_buffer_from_magic(*sv_p, 0) : NULL;
+      size_t orig_section= ini->section_ofs;
+      sv_p= hv_fetchs(ini->wrapper, "key", 1);
+   CODE:
+      if (!buf) croak("No buffer assigned");
+      if (!sv_p || !*sv_p) croak("BUG");
+      RETVAL= secret_buffer_ini_parse_next(ini, buf);
+      if (RETVAL) {
+         sv_setpvn(*sv_p, buf->data + ini->key_ofs, ini->key_len);
+         if (orig_section != ini->section_ofs) {
+            sv_p= hv_fetchs(ini->wrapper, "section", 1);
+            if (!sv_p || !*sv_p) croak("BUG");
+            sv_setpvn(*sv_p, buf->data + ini->section_ofs, ini->section_len);
+         }
+      }
+      else {
+         sv_setsv(*sv_p, &PL_sv_undef);
+      }
+   OUTPUT:
+      RETVAL
+
+void
+decode_value(ini, flags=0)
+   secret_buffer_ini *ini
+   UV flags
+   ALIAS:
+      value         = 1
+      decode_secret = 2
+   INIT:
+      SV **sv_p= hv_fetchs(ini->wrapper, "buffer", 0);
+      secret_buffer *buf= sv_p && *sv_p? secret_buffer_from_magic(*sv_p, 0) : NULL;
+   PPCODE:
+      if (!buf) croak ("No buffer assigned");
+      if (ix == 2 || (flags & SBI_AS_SECRETBUFFER)) {
+         SV *sb_ref= NULL;
+         secret_buffer *out= secret_buffer_new(ini->value_len, &sb_ref);
+         if (ini->value_len) {
+            size_t len= secret_buffer_ini_decode_value(ini, buf, out->data, out->capacity, flags);
+            if (len == 0 && ini->err != NULL)
+               croak("%s", ini->err);
+            buf->len= len;
+         }
+         PUSHs(sb_ref);
+      }
+      else {
+         SV *out= sv_2mortal(newSV(ini->value_len + 1));
+         if (ini->value_len) {
+            size_t len= secret_buffer_ini_decode_value(ini, buf, SvPVX(out), ini->value_len, flags);
+            if (len == 0 && ini->err != NULL)
+               croak("%s", ini->err);
+            SvCUR_set(out, len);
+            SvPVX(out)[len]= '\0';
+            SvPOK_on(out);
+            if (ini->utf8) // the decode function already verified the UTF-8 validity
+               SvUTF8_on(out);
+         }
+         PUSHs(out);
+      }
+
 BOOT:
-   HV *stash= gv_stashpvn("Crypt::SecretBuffer", 19, 1);
+   HV *stash= gv_stashpvs("Crypt::SecretBuffer", 1);
    newCONSTSUB(stash, "NONBLOCK",  new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK,  newSVpvs_share("NONBLOCK")));
    newCONSTSUB(stash, "AT_LEAST",  new_enum_dualvar(aTHX_ SECRET_BUFFER_AT_LEAST,  newSVpvs_share("AT_LEAST")));
    SECRET_BUFFER_EXPORT_FUNCTION_POINTERS
+   stash= gv_stashpvs("Crypt::SecretBuffer::INI", 1);
+   newCONSTSUB(stash, "AS_SECRETBUFFER",  new_enum_dualvar(aTHX_ SBI_AS_SECRETBUFFER,  newSVpvs_share("AS_SECRETBUFFER")));
+   newCONSTSUB(stash, "FORMAT_HEX",  new_enum_dualvar(aTHX_ SBI_FORMAT_HEX,  newSVpvs_share("FORMAT_HEX")));
+   

@@ -128,6 +128,31 @@ extern SV* secret_buffer_get_stringify_sv(secret_buffer *buf);
  */
 extern void secret_buffer_wipe(char *buf, size_t len);
 
+typedef struct {
+   HV *wrapper;
+   size_t pos,
+          section_ofs,
+          section_len,
+          key_ofs,
+          key_len,
+          value_ofs,
+          value_len;
+   bool   utf8,
+          opt_hash_comment,
+          opt_inline_comment;
+   const char *err;
+} secret_buffer_ini;
+
+extern void secret_buffer_ini_init(secret_buffer_ini *ini);
+extern void secret_buffer_ini_destroy(secret_buffer_ini *ini);
+
+extern bool secret_buffer_ini_parse_next(secret_buffer_ini *ini, secret_buffer *buf);
+
+#define SBI_AS_SECRETBUFFER 1
+#define SBI_FORMAT_HEX      2
+extern size_t secret_buffer_ini_decode_value(secret_buffer_ini *ini, secret_buffer *buf,
+   char *out, size_t out_size, unsigned flags);
+
 #include "SecretBufferManualLinkage.h"
 
 #endif /* CRYPT_SECRETBUFFER_H */
