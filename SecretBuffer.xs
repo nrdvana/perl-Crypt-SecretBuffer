@@ -600,7 +600,7 @@ secret_buffer_async_result* secret_buffer_async_result_from_magic(SV *obj, int f
       return NULL;
    }
    sv = SvRV(obj);
-   if (SvMAGICAL(sv) && (magic = mg_findext(sv, PERL_MAGIC_ext, &secret_buffer_magic_vtbl)))
+   if (SvMAGICAL(sv) && (magic = mg_findext(sv, PERL_MAGIC_ext, &secret_buffer_async_result_magic_vtbl)))
       return (secret_buffer_async_result*) magic->mg_ptr;
    if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
       croak("Object lacks 'secret_buffer_async_result' magic");
