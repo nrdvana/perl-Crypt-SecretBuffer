@@ -139,7 +139,8 @@ typedef struct {
           value_len;
    bool   utf8,
           opt_hash_comment,
-          opt_inline_comment;
+          opt_inline_comment,
+          opt_space_multiline;
    const char *err;
 } secret_buffer_ini;
 
