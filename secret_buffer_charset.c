@@ -31,8 +31,7 @@ static int secret_buffer_charset_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param)
    Newx(new_cset, 1, secret_buffer_charset);
    Copy(old_cset, new_cset, 1, secret_buffer_charset);
 
-   /* Update the SV pointer to the cloned regexp */
-   new_cset->rx = (REGEXP*) mg->mg_obj;
+   new_cset->rx = NULL; // filled again later during charset_from_regexp_ref
 
    mg->mg_ptr = (char*)new_cset;
    return 0;
@@ -244,7 +243,14 @@ static bool regex_is_single_charclass(REGEXP *rx) {
    /* Get the pattern string */
    STRLEN pat_len = RX_PRELEN(rx);
    const char *pattern = RX_PRECOMP(rx);
-   struct regexp *re= (struct regexp*) SvANY(rx);
+   struct regexp *re=
+#ifndef SVt_REGEXP
+      // before 5.12 REGEXP was struct regexp
+      (struct regexp*) rx;
+#else
+      // after 5.12 REGEXP is a type of SV
+      (struct regexp*) SvANY(rx);
+#endif
    /* Try to validate that this regex is a single char class */
    return re->nparens == 0
        && re->minlen == 1
@@ -252,24 +258,26 @@ static bool regex_is_single_charclass(REGEXP *rx) {
 }
 
 /* Main function: Get or create cached charset from regexp */
-secret_buffer_charset *secret_buffer_charset_from_regexp(SV *rx_sv) {
+secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *rx_sv) {
    MAGIC *mg;
    REGEXP *rx;
    secret_buffer_charset *cset;
    dTHX;
 
    /* Validate input */
-   if (!rx_sv || !SvOK(rx_sv) || SvTYPE(rx_sv) != SVt_REGEXP)
-      croak("Expected Regexp object (not ref)");
+   if (!rx_sv || !(rx= SvRX(rx_sv)))
+      croak("Expected Regexp ref");
 
    /* Check for existing cached charset */
    if (SvMAGICAL(rx_sv)) {
       mg = mg_findext(rx_sv, PERL_MAGIC_ext, &secret_buffer_charset_magic_vtbl);
-      if (mg && mg->mg_ptr)
-         return (secret_buffer_charset*)mg->mg_ptr;
+      if (mg && mg->mg_ptr) {
+         cset= (secret_buffer_charset*)mg->mg_ptr;
+         cset->rx= rx; // in case threading cloned us
+         return cset;
+      }
    }
 
-   rx = (REGEXP*) rx_sv;
    if (!regex_is_single_charclass(rx))
       croak("Regex must contain a single character class and nothing else");
 
@@ -294,10 +302,4 @@ secret_buffer_charset *secret_buffer_charset_from_regexp(SV *rx_sv) {
                &secret_buffer_charset_magic_vtbl, (char*)cset, 0);
 
    return cset;
-}
-
-extern secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *ref) {
-   if (!ref || !SvROK(ref) || SvTYPE(SvRV(ref)) != SVt_REGEXP)
-      croak("Expected Regexp reference");
-   return secret_buffer_charset_from_regexp(SvRV(ref));
 }

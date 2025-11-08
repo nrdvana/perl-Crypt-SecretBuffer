@@ -3,6 +3,9 @@
 #include "XSUB.h"
 #define NEED_mg_findext
 #define NEED_newSVpvn_share
+#define NEED_SvRX
+#define NEED_RX_PRECOMP
+#define NEED_RX_PRELEN
 #include "ppport.h"
 
 #include "SecretBuffer_config.h"

@@ -32,7 +32,6 @@ typedef struct {
  * range of characters 0..255 through `s/$patern//g` and building the bitmap
  * from the result.
  */
-extern secret_buffer_charset *secret_buffer_charset_from_regexp(SV *re_sv);
 extern secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *ref);
 
 /* Test whether the charset contains an 8-bit byte.
