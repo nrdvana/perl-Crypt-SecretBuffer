@@ -507,7 +507,7 @@ sub save_file {
       $wrote += $w;
    }
    close($fh) or croak "close($cur_path): $!";
-   if ($overwrite erq 'rename') {
+   if ($overwrite eq 'rename') {
       rename($cur_path, $path) or croak "rename($cur_path -> $path): $!";
       $fh->unlink_on_destroy(0);
    }

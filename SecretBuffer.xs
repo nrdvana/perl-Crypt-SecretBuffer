@@ -1056,6 +1056,8 @@ typedef secret_buffer  *maybe_secret_buffer;
 /* flag for capacity */
 #define SECRET_BUFFER_AT_LEAST 1
 
+#include "secret_buffer_charset.c"
+
 /* Convenience to convert string parameters to the corresponding integer so that Perl-side
  * doesn't always need to import the flag constants.
  */
@@ -1459,6 +1461,16 @@ unmask_secrets_to(coderef, ...)
       if (SvTRUE(ERRSV))
          croak_sv(ERRSV);
       XSRETURN(count);
+
+void
+_debug_charset(cset)
+   secret_buffer_charset *cset
+   INIT:
+      HV *hv;
+   PPCODE:
+      PUSHs(sv_2mortal((SV*)newRV_noinc((SV*)(hv= newHV()))));
+      hv_stores(hv, "bitmap", newSVpvn((char*)cset->bitmap, sizeof(cset->bitmap)));
+      hv_stores(hv, "unicode_above_7F", newSViv(cset->unicode_above_7F));
 
 MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::AsyncResult
 

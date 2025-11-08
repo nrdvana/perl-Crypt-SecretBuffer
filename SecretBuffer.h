@@ -14,6 +14,79 @@ typedef struct {
    SV *wrapper;
 } secret_buffer;
 
+typedef struct {
+   uint64_t bitmap[4];   // covers 0..255 codepoints
+   REGEXP *rx;           // refers to Regexp object this was derived from
+   #define SECRET_BUFFER_CHARSET_NOUNI 0
+   #define SECRET_BUFFER_CHARSET_ALLUNI 1
+   #define SECRET_BUFFER_CHARSET_TESTUNI 2
+   int unicode_above_7F; // controls action when matching against unicode
+} secret_buffer_charset;
+
+/* Given a Regexp-type SV (not the ref to it) either return a cached
+ * secret_buffer_charset from a previous call, or build a new one by
+ * analyzing the regexp, then cache it in MAGIC.
+ * The regexp must be a single character class specification and nothing else,
+ * but it may use the case-insensitive flag.  If the pattern uses anything more
+ * than simple characters or ranges, the bitmap is determined by passing the
+ * range of characters 0..255 through `s/$patern//g` and building the bitmap
+ * from the result.
+ */
+extern secret_buffer_charset *secret_buffer_charset_from_regexp(SV *re_sv);
+extern secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *ref);
+
+/* Test whether the charset contains an 8-bit byte.
+ * This relies solely on the bitmap.
+ */
+extern bool secret_buffer_charset_test_byte(const secret_buffer_charset *cset, U8 b);
+
+/* Test whether the charset contains a unicode character.  This uses the perl regex
+ * engine if the codepoint is higher than 0x7F, to ensure correct matching.
+ */
+extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, uint32_t cp);
+
+#define SECRET_BUFFER_PARSE_ASCII    0
+#define SECRET_BUFFER_PARSE_UTF8     1
+#define SECRET_BUFFER_PARSE_UTF16LE  2
+#define SECRET_BUFFER_PARSE_UTF16BE  3
+
+typedef struct {
+   size_t pos, lim;
+   int encoding;
+   const char *error;
+} secret_buffer_parse;
+
+/* Scan through a SecretBuffer looking for the first (and maybe also last)
+ * character belonging to a set.  The 'pos' and 'lim' of the parse struct
+ * define the range that will be searched, and will be updated with the result
+ * of the scan.  If pos == lim at the end, the character was not found.
+ * Returns true if the scan completed (found or not) and false if it was
+ * interrupted by an invalid character.
+ *
+ * The _NEGATE flag can be used to negate the charset without altering it.
+ *
+ * The _REVERSE flag can be used to search backward from [lim-1] back to [pos],
+ * in which case 'lim' will be updated with the results of the scan.
+ *
+ * The _SPAN flag requests that after finding the first match and updating
+ * 'pos' (or 'lim' if reversed), it will then begin looking for a character not
+ * belonging to the charset, and then update 'lim'. (or 'pos' if reversed)
+ *
+ * If the parse state specifies an encoding, pos and lim must be at character
+ * boundaries, and invalid characters will stop the parse and store a message
+ * in ->error, also updating pos (or lim) to indicate the byte offset.
+ * Note that every codepoint higher than 255 compared to a charset with the
+ * maybe_unicode flag will call out to the perl regex engine and be a bit slow.
+ */
+#define SECRET_BUFFER_SCAN_REVERSE 1
+#define SECRET_BUFFER_SCAN_NEGATE  2
+#define SECRET_BUFFER_SCAN_SPAN    4
+//extern bool secret_buffer_scan(
+//   secret_buffer *sb,
+//   secret_buffer_charset *cset,
+//   secret_buffer_parse *parse_state,
+//   int flags);
+
 /* Create a new Crypt::SecretBuffer object with a mortal ref and return its secret_buffer
  * struct pointer.
  * If ref_out is NULL then the mortal ref remains mortal, and as your function exits the next
