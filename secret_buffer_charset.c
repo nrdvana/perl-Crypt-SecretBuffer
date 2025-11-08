@@ -51,12 +51,13 @@ static MGVTBL secret_buffer_charset_magic_vtbl = {
    NULL                     /* local */
 };
 
-/* Helper: Set a bit in the bitmap */
+/* Set a bit in the bitmap */
 static inline void sbc_bitmap_set(uint64_t *bitmap, U8 c) {
    bitmap[c >> 6] |= (1ULL << (c & 63));
 }
+/* Test for byte in bitmap */
 static inline bool sbc_bitmap_test(const uint64_t *bitmap, U8 c) {
-   return (bool)((bitmap[c >> 6] >> (c & 63)) & 1);
+   return (bitmap[c >> 6] >> (c & 63)) & 1;
 }
 
 /* Helper to test if a unicode codepoint matches the charset */

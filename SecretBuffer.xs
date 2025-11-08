@@ -1060,6 +1060,7 @@ typedef secret_buffer  *maybe_secret_buffer;
 #define SECRET_BUFFER_AT_LEAST 1
 
 #include "secret_buffer_charset.c"
+#include "secret_buffer_scan.c"
 
 /* Convenience to convert string parameters to the corresponding integer so that Perl-side
  * doesn't always need to import the flag constants.
