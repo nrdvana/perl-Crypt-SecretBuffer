@@ -20,45 +20,51 @@ subtest index_char => sub {
 sub _render_char {
    $_[0] >= 0x21 && $_[0] <= 0x7E? chr $_[0] : sprintf("\\x%02X", $_[0])
 }
-sub bitmap_to_chars {
-   my $str= '';
-   my $range_start= -1;
-   for (0..0x100) {
-      if (vec($_[0], $_, 1)) {
-         if ($range_start < 0) {
-            $range_start= $_;
-            $str .= _render_char($_);
-         }
-      } elsif ($range_start >= 0) {
-         my $ofs= $_ - $range_start;
-         $str .= '-' if $ofs > 2;
-         $str .= _render_char($_ - 1) if $ofs > 1;
-         $range_start= -1;
-      }
+sub bitmap_to_invlist {
+   my @invlist;
+   for (0..0xFF) {
+      push @invlist, $_ if vec($_[0], $_, 1) ^ (@invlist & 1);
    }
-   return $str;
+   return \@invlist
 }
 
+# Test the inversion lists created for various charsets.
+# Right now this is converting bitmaps from first 256 bytes into an inversion list,
+# but in the future I'd like the back-end to be using inversion lists and able to cover
+# unicode.
 subtest charset => sub {
    # tests below use \x{100} to force perl-interpretation of a regex
    # as a baseline to compare the parsed bitmap to the perl-generated one.
    my $uni_literal= "\x{1000}";
+   # third column regards unicode above 0x7F: 0 = none match, 1 = all match, 2 = need to test
    my @tests= (
-      [ qr/[a-z]/                      => 'a-z', 0 ],
-      [ qr/[a-z]/i                     => 'A-Za-z', 0 ],
-      [ qr/[a-z 5\x{100}]/ixx          => '5A-Za-z', 2 ],
-      [ qr/[a-z 5]/ixx                 => '5A-Za-z', 0 ],
-      [ qr/[\0-\108\7777-9]/           => '\x00-\x087-9', 2 ],
-      [ qr/[\t\r\n]/                   => '\x09\x0A\x0D', 0 ],
-      [ qr/[[:alpha:]]/                => 'A-Za-z', 2 ],
-      [ qr/[\x00-\e]/                  => '\x00-\x1B', 0 ],
-      [ qr/[$uni_literal]/             => '', 2 ],
+      [ qr/[a-z]/                      => [97, 123], 0 ],
+      [ qr/[a-z]/i                     => [65, 91, 97, 123], 0 ],
+      ($] ge '5.012'? ( # /xx wasn't added until 5.12
+         [ qr/[a-z 5\x{100}]/ixx       => [53, 54, 65, 91, 97, 123], 2 ],
+         [ qr/[a-z 5]/ixx              => [53, 54, 65, 91, 97, 123], 0 ],
+      ):()),
+      [ do { no warnings; qr/[\0-\108\7777-9]/ } => [0, 9, 55, 58], 2 ],
+      [ qr/[\t\r\n]/                   => [9, 11, 13, 14], 0 ],
+      [ qr/[[:alpha:]]/                => [65, 91, 97, 123], 2 ],
+      [ qr/[\x00-\e]/                  => [0, 28], 0 ],
+      [ qr/[$uni_literal]/             => [ 0x1000, 0x1001 ], 2 ],
+      [ qr/[\p{Block: Katakana}]/      => [ 0x30A0, 0x3100 ], 2 ],
+      [ qr/[^[:digit:]]/               => [ 0,0x30, 0x3A ], 2 ],
+      ($] ge '5.012'? ( # \p{digit} wasn't available until 5.12
+         [ qr/[[:alpha:]\P{digit}]/    => [ 0,0x30, 0x3A ], 2 ],
+      ):()),
+      [ qr/[\p{alpha}\P{alpha}]/       => [ 0 ], 2 ],
+      [ qr/[^\0\n]/                    => [ 1,10, 11 ], 1 ],
    );
    for (@tests) {
-      my ($re, $ranges, $above7F)= @$_;
+      my ($re, $invlist, $above7F)= @$_;
       my $cset= Crypt::SecretBuffer::Exports::_debug_charset($re);
-      $cset->{bitmap}= bitmap_to_chars($cset->{bitmap});
-      is( $cset, { bitmap => $ranges, unicode_above_7F => $above7F }, "$re" );
+      $cset->{invlist}= bitmap_to_invlist(delete $cset->{bitmap});
+      # for now, remove all invlist items greater than 0xFF
+      pop @{$cset->{invlist}} while 0xFF < ($cset->{invlist}[-1]||0);
+      pop @$invlist while 0xFF < ($invlist->[-1]||0);
+      is( $cset, { invlist => $invlist, unicode_above_7F => $above7F }, "$re" );
    }
 };
 

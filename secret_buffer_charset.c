@@ -252,9 +252,9 @@ static bool regex_is_single_charclass(REGEXP *rx) {
       (struct regexp*) SvANY(rx);
 #endif
    /* Try to validate that this regex is a single char class */
-   return re->nparens == 0
-       && re->minlen == 1
-       && pat_len >= 3 && pattern[0] == '[' && pattern[pat_len-1] == ']';
+   //warn("pattern = '%.*s' re->nparens = %d re->minlen = %d", pat_len, pattern, re->nparens, re->minlen);
+   return pat_len >= 3 && pattern[0] == '[' && pattern[pat_len-1] == ']';
+//       && re->nparens == 0 && re->minlen == 1; <-- this doesn't seem to be reliable
 }
 
 /* Main function: Get or create cached charset from regexp */
