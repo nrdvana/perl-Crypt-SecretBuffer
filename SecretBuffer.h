@@ -44,10 +44,12 @@ extern bool secret_buffer_charset_test_byte(const secret_buffer_charset *cset, U
  */
 extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, uint32_t cp);
 
-#define SECRET_BUFFER_PARSE_ASCII    0
-#define SECRET_BUFFER_PARSE_UTF8     1
-#define SECRET_BUFFER_PARSE_UTF16LE  2
-#define SECRET_BUFFER_PARSE_UTF16BE  3
+/* encoding flags can be combined with other flags */
+#define SECRET_BUFFER_ENCODING_MASK     7
+#define SECRET_BUFFER_ENCODING_ASCII    0
+#define SECRET_BUFFER_ENCODING_UTF8     1
+#define SECRET_BUFFER_ENCODING_UTF16LE  2
+#define SECRET_BUFFER_ENCODING_UTF16BE  3
 
 typedef struct {
    size_t pos, lim;
@@ -77,14 +79,14 @@ typedef struct {
  * Note that every codepoint higher than 255 compared to a charset with the
  * maybe_unicode flag will call out to the perl regex engine and be a bit slow.
  */
-#define SECRET_BUFFER_SCAN_REVERSE 1
-#define SECRET_BUFFER_SCAN_NEGATE  2
-#define SECRET_BUFFER_SCAN_SPAN    4
-//extern bool secret_buffer_scan(
-//   secret_buffer *sb,
-//   secret_buffer_charset *cset,
-//   secret_buffer_parse *parse_state,
-//   int flags);
+#define SECRET_BUFFER_SCAN_REVERSE 0x10
+#define SECRET_BUFFER_SCAN_NEGATE  0x20
+#define SECRET_BUFFER_SCAN_SPAN    0x40
+extern bool secret_buffer_scan(
+   secret_buffer *sb,
+   secret_buffer_charset *cset,
+   secret_buffer_parse *parse_state,
+   int flags);
 
 /* Create a new Crypt::SecretBuffer object with a mortal ref and return its secret_buffer
  * struct pointer.

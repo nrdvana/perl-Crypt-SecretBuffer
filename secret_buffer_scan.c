@@ -20,7 +20,7 @@ bool secret_buffer_scan(
       return false;
 
    // byte matching gets to use a more efficient algorithm
-   return parse_state->encoding == SECRET_BUFFER_PARSE_ASCII
+   return parse_state->encoding == SECRET_BUFFER_ENCODING_ASCII
       ? parse_scan_bytes(parse_state, (U8*) sb->data, cset, flags)
       : parse_scan_codepoints(parse_state, (U8*) sb->data, cset, flags);
 }
@@ -115,15 +115,15 @@ static int parse_next_codepoint(secret_buffer_parse *parse_state, const U8 *data
    const U8 *pos= data + parse_state->pos, *lim= data + parse_state->lim;
    int cp;
 
-   if (parse_state->encoding == SECRET_BUFFER_PARSE_ASCII
-    || parse_state->encoding == SECRET_BUFFER_PARSE_UTF8
+   if (parse_state->encoding == SECRET_BUFFER_ENCODING_ASCII
+    || parse_state->encoding == SECRET_BUFFER_ENCODING_UTF8
    ) {
       if (lim - pos < 1) {
          parse_state->error= "parse range too small";
          return -1;
       }
       cp= *pos++;
-      if (cp >= 0x80 && parse_state->encoding == SECRET_BUFFER_PARSE_UTF8) {
+      if (cp >= 0x80 && parse_state->encoding == SECRET_BUFFER_ENCODING_UTF8) {
          int min_cp= 0;
          switch ((cp >> 3) & 0xF) {
          case 14:                          // 0b1[1110]yyy
@@ -166,10 +166,10 @@ static int parse_next_codepoint(secret_buffer_parse *parse_state, const U8 *data
          }
       }
    }
-   else if (parse_state->encoding == SECRET_BUFFER_PARSE_UTF16LE
-         || parse_state->encoding == SECRET_BUFFER_PARSE_UTF16BE
+   else if (parse_state->encoding == SECRET_BUFFER_ENCODING_UTF16LE
+         || parse_state->encoding == SECRET_BUFFER_ENCODING_UTF16BE
    ) {
-      int low= parse_state->encoding == SECRET_BUFFER_PARSE_UTF16LE? 0 : 1;
+      int low= parse_state->encoding == SECRET_BUFFER_ENCODING_UTF16LE? 0 : 1;
       if (lim - pos < 2) {
          parse_state->error= "parse range too small";
          return -1;
@@ -202,20 +202,20 @@ static int parse_prev_codepoint(secret_buffer_parse *parse_state, const U8 *data
    const U8 *pos= data + parse_state->pos, *lim= data + parse_state->lim;
    int cp;
 
-   if (parse_state->encoding == SECRET_BUFFER_PARSE_ASCII
-    || parse_state->encoding == SECRET_BUFFER_PARSE_UTF8
+   if (parse_state->encoding == SECRET_BUFFER_ENCODING_ASCII
+    || parse_state->encoding == SECRET_BUFFER_ENCODING_UTF8
    ) {
       if (lim <= pos) {
          parse_state->error= "parse range too small";
          return -1;
       }
       // handle the simple case first
-      if (lim[-1] < 0x80 || parse_state->encoding == SECRET_BUFFER_PARSE_ASCII) {
+      if (lim[-1] < 0x80 || parse_state->encoding == SECRET_BUFFER_ENCODING_ASCII) {
          parse_state->lim--;
          return lim[-1];
       }
       // else need to backtrack and then call next_codepoint
-      U8 *prev= lim-1;
+      const U8 *prev= lim-1;
       while (prev >= pos && (*prev & 0xC0) == 0x80)
          --prev;
       parse_state->pos= prev - data;
@@ -231,15 +231,15 @@ static int parse_prev_codepoint(secret_buffer_parse *parse_state, const U8 *data
       }
       parse_state->pos= pos - data; // restore original pos
    }
-   else if (parse_state->encoding == SECRET_BUFFER_PARSE_UTF16LE
-         || parse_state->encoding == SECRET_BUFFER_PARSE_UTF16BE
+   else if (parse_state->encoding == SECRET_BUFFER_ENCODING_UTF16LE
+         || parse_state->encoding == SECRET_BUFFER_ENCODING_UTF16BE
    ) {
       if (lim - pos < 2) {
          parse_state->error= "parse range too small";
          return -1;
       }
       // handle the simple case first
-      int low= parse_state->encoding == SECRET_BUFFER_PARSE_UTF16LE? 0 : 1;
+      int low= parse_state->encoding == SECRET_BUFFER_ENCODING_UTF16LE? 0 : 1;
       cp= lim[-2 + low] | ((int)pos[-2 + (low^1)] << 8);
       if (cp < 0xD800 || cp > 0xDFFF) {
          parse_state->lim -= 2;

@@ -1231,24 +1231,102 @@ clear(buf)
       secret_buffer_realloc(buf, 0);
       XSRETURN(1); /* self, for chaining */
 
-IV
-index(buf, substr, ofs= 0)
+void
+scan(buf, subject, ofs= 0, lim_sv= &PL_sv_undef, flags=0)
    auto_secret_buffer buf
-   SV *substr
+   SV *subject
    IV ofs
+   SV *lim_sv
+   IV flags
+   ALIAS:
+      index  = 1
+      rindex = 2
    INIT:
-      char *found;
-      STRLEN len;
-      const char *str= SvPV(substr, len);
-   CODE:
+      secret_buffer_parse parse_state;
+      REGEXP *rx= SvRX(subject);
+      bool reverse= flags & SECRET_BUFFER_SCAN_REVERSE;
+      bool find_span= flags & SECRET_BUFFER_SCAN_SPAN;
+      // lim was captured as an SV so that undef can be used to indicate
+      // end of the buffer.
+      Zero(&parse_state, 1, parse_state);
+      parse_state.lim= lim_sv && SvOK(lim_sv)? SvIV(lim_sv) : buf->len;
+      parse_state.encoding= (flags & SECRET_BUFFER_ENCODING_MASK);
+   PPCODE:
       /* normalize negative offset, and clamp to valid range */
       ofs= normalize_offset(ofs, buf->len);
-      found= (char*) memmem(buf->data + ofs, buf->len - ofs, str, len);
-      RETVAL= found? found - buf->data : -1;
-      /* documented bug from glibc 2.0 */
-      if (RETVAL >= buf->len) RETVAL= -1;
-   OUTPUT:
-      RETVAL
+      if (ix == 2) {
+         flags |= SECRET_BUFFER_SCAN_REVERSE;
+         // for rindex, the ofs param is actually the 'max'
+         parse_state.lim= ofs < buf->len? ofs+1 : buf->len;
+         parse_state.pos= SvOK(lim_sv)? normalize_offset(SvIV(lim_sv), buf->len) : 0;
+      }
+      else {
+         parse_state.pos= ofs;
+         parse_state.lim= SvOK(lim_sv)? normalize_offset(SvIV(lim_sv), buf->len) : buf->len;
+      }
+      
+      if (rx) { // subject is a regex, currently restricted to 1 charclass
+         secret_buffer_charset *cset= secret_buffer_charset_from_regexpref(subject);
+         // This reports errors that interrupted the scan, like invalid character encoding.
+         if (!secret_buffer_scan(buf, cset, &parse_state, flags)
+            && parse_state.error)
+            croak("%s", parse_state.error);
+         // A failed match is just indicated by the parse positions
+      }
+      else { // subject is a plain string
+         STRLEN len;
+         const char *str= SvPVbyte(subject, len);
+         // get this edge case out of the way
+         if (len == 0) {
+            IV pos= reverse? parse_state.lim : parse_state.pos;
+            PUSHs(sv_2mortal(newSViv(pos)));
+            XSRETURN(1);
+         }
+         char first_ch= *str,
+              *pmin= buf->data + parse_state.pos,
+              *pmax= buf->data + parse_state.lim - len;
+         if (reverse) {
+            while (pmin <= pmax) {
+               if (*pmax == first_ch && 0 == memcmp(pmax, str, len)) {
+                  parse_state.pos= pmax - buf->data;
+                  parse_state.lim= parse_state.pos + len;
+                  if (find_span) {
+                     while (pmin < pmax && pmax[-1] == first_ch && 0 == memcmp(pmax-1, str, len))
+                        --pmax;
+                     parse_state.pos= pmax - buf->data;
+                  }
+                  break;
+               }
+               --pmax;
+            }
+         } else {
+            while (pmin <= pmax) {
+               if (*pmin == first_ch && 0 == memcmp(pmin, str, len)) {
+                  parse_state.pos= pmin - buf->data;
+                  parse_state.lim= parse_state.pos + len;
+                  if (find_span) {
+                     while (pmin < pmax && pmin[1] == first_ch && 0 == memcmp(pmin+1, str, len))
+                        ++pmin;
+                     parse_state.lim= pmin - buf->data + len;
+                  }
+                  break;
+               }
+               ++pmin;
+            }
+         }
+         if (pmin > pmax) { // Not found, describe a zero-length range
+            parse_state.pos= pmin - buf->data;
+            parse_state.lim= parse_state.pos;
+         }
+      }
+      // If implementing index or rindex, return -1 as the not-found value
+      if (ix) {
+         IV ret= (parse_state.pos == parse_state.lim)? -1 : parse_state.pos;
+         PUSHs(sv_2mortal(newSViv(ret)));
+      } else {
+         PUSHs(sv_2mortal(newSViv(parse_state.pos)));
+         PUSHs(sv_2mortal(newSViv(parse_state.lim)));
+      }
 
 void
 substr(buf, ofs, count_sv=NULL, replacement=NULL)
@@ -1498,4 +1576,10 @@ BOOT:
    HV *stash= gv_stashpvn("Crypt::SecretBuffer", 19, 1);
    newCONSTSUB(stash, "NONBLOCK",  new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK,  newSVpvs_share("NONBLOCK")));
    newCONSTSUB(stash, "AT_LEAST",  new_enum_dualvar(aTHX_ SECRET_BUFFER_AT_LEAST,  newSVpvs_share("AT_LEAST")));
+   newCONSTSUB(stash, "SCAN_SPAN", new_enum_dualvar(aTHX_ SECRET_BUFFER_SCAN_SPAN, newSVpvs_share("SCAN_SPAN")));
+   newCONSTSUB(stash, "SCAN_REVERSE",new_enum_dualvar(aTHX_ SECRET_BUFFER_SCAN_REVERSE, newSVpvs_share("SCAN_REVERSE")));
+   newCONSTSUB(stash, "SCAN_NEGATE",new_enum_dualvar(aTHX_ SECRET_BUFFER_SCAN_NEGATE,   newSVpvs_share("SCAN_NEGATE")));
+   newCONSTSUB(stash, "UTF8",    new_enum_dualvar(aTHX_ SECRET_BUFFER_ENCODING_UTF8,    newSVpvs_share("UTF8")));
+   newCONSTSUB(stash, "UTF16LE", new_enum_dualvar(aTHX_ SECRET_BUFFER_ENCODING_UTF16LE, newSVpvs_share("UTF16LE")));
+   newCONSTSUB(stash, "UTF16BE", new_enum_dualvar(aTHX_ SECRET_BUFFER_ENCODING_UTF16BE, newSVpvs_share("UTF16BE")));
    SECRET_BUFFER_EXPORT_FUNCTION_POINTERS

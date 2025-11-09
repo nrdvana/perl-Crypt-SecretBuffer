@@ -1,20 +1,32 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
-use Crypt::SecretBuffer qw(secret);
+use Crypt::SecretBuffer qw( secret SCAN_SPAN );
 
-my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
-
-subtest index_char => sub {
+subtest index_str => sub {
+   my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
    is($buf->index('abc'), 0, 'find first substring');
    is($buf->index('123'), 3, 'find middle substring');
-   is($buf->index("\0"), 6, 'find middle substring');
+   is($buf->index("\0"), 6, 'find NUL byte');
    is($buf->index("\0", 6), 6, 'find NUL byte');
    is($buf->index('abc', 4), 7, 'find substring after offset');
    is($buf->index('nope'), -1, 'return -1 when not found');
    is($buf->index('abc', -4), -1, 'negative offset beyond substring');
    is($buf->index("6", $buf->length-1), $buf->length-1, 'find last byte starting from last byte');
    is($buf->index("6", -1), $buf->length-1, 'find last byte using negative index');
+};
+
+subtest rindex_str => sub {
+   my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
+   is($buf->rindex('abc'), 7, 'find first substring');
+   is($buf->rindex('123'), 3, 'find middle substring');
+   is($buf->rindex("\0"), 6, 'find NUL byte');
+   is($buf->rindex("\0", 7), 6, 'find NUL byte from ofs');
+   is($buf->rindex('abc', 4), 0, 'find substring after offset');
+   is($buf->rindex('nope'), -1, 'return -1 when not found');
+   is($buf->rindex('abc', -4), -1, 'negative offset beyond substring');
+   is($buf->rindex("a", 0), 0, 'find first byte starting from first byte');
+   is($buf->rindex("6", -13), 0, 'find last byte using negative index');
 };
 
 sub _render_char {
@@ -66,6 +78,17 @@ subtest charset => sub {
       pop @$invlist while 0xFF < ($invlist->[-1]||0);
       is( $cset, { invlist => $invlist, unicode_above_7F => $above7F }, "$re" );
    }
+};
+
+subtest index_charset => sub {
+   my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
+   is($buf->index(qr/[0-9]/), 3, 'find first digit');
+};
+
+subtest scan_charset => sub {
+   my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
+   is( [$buf->scan(qr/[0-9]/)], [3,6], 'find segment starting at digit');
+   is( [$buf->scan(qr/[0-9]/, SCAN_SPAN)], [3,6], 'find span of digits');
 };
 
 done_testing;
