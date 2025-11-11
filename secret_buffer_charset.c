@@ -20,6 +20,7 @@ struct secret_buffer_charset {
    #define SECRET_BUFFER_CHARSET_ALLUNI 1
    #define SECRET_BUFFER_CHARSET_TESTUNI 2
    int unicode_above_7F; // controls action when matching against unicode
+   bool match_span;      // stores whether regex ended with '+'
 };
 
 /* MAGIC vtable for cached charset */
@@ -118,6 +119,10 @@ static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, REGEXP *rx
    bool negated = false;
 
    //warn("Attempting to parse '%.*s' %d  %c %c\n", (int)(lim-pos), pos, (int)RX_PRELEN(rx), *pos, lim[-1]);
+   if (pos < lim && lim[-1] == '+') {
+      cset->match_span= true;
+      lim--;
+   }
    if (pos >= lim || *pos != '[' || lim[-1] != ']')
       return false;
    pos++; /* Skip [ */
@@ -255,15 +260,16 @@ static bool regex_is_single_charclass(REGEXP *rx) {
    const char *pattern = RX_PRECOMP(rx);
    struct regexp *re=
 #ifndef SVt_REGEXP
-      // before 5.12 REGEXP was struct regexp
-      (struct regexp*) rx;
+      (struct regexp*) rx;          // before 5.12 REGEXP was struct regexp
 #else
-      // after 5.12 REGEXP is a type of SV
-      (struct regexp*) SvANY(rx);
+      (struct regexp*) SvANY(rx);   // after 5.12 REGEXP is a type of SV
 #endif
-   /* Try to validate that this regex is a single char class */
+   /* Try to validate that this regex is a single char class, with optional '+' */
    //warn("pattern = '%.*s' re->nparens = %d re->minlen = %d", pat_len, pattern, re->nparens, re->minlen);
-   return pat_len >= 3 && pattern[0] == '[' && pattern[pat_len-1] == ']';
+   return pat_len >= 3 && pattern[0] == '[' && (
+            pattern[pat_len-1] == ']'
+         || (pattern[pat_len-1] == '+' && pattern[pat_len-2] == ']')
+         );
 //       && re->nparens == 0 && re->minlen == 1; <-- this doesn't seem to be reliable
 }
 

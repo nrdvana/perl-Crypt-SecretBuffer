@@ -81,7 +81,7 @@ static bool parse_scan_charset_bytes(
 ) {
    bool negate=  (flags & SECRET_BUFFER_SCAN_NEGATE);
    bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
-   bool span=    (flags & SECRET_BUFFER_SCAN_SPAN);
+   bool span=    (flags & SECRET_BUFFER_SCAN_SPAN) || cset->match_span;
    int step= reverse? -1 : 1;
    const U8 *pos= reverse? data + parse_state->lim-1 : data + parse_state->pos,
             *lim= reverse? data + parse_state->pos-1 : data + parse_state->lim,
@@ -125,9 +125,9 @@ static bool parse_scan_charset_codepoints(
    int flags
 ) {
    dTHX;
-   bool negate= (flags & SECRET_BUFFER_SCAN_NEGATE);
+   bool negate=  (flags & SECRET_BUFFER_SCAN_NEGATE);
    bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
-   bool span= (flags & SECRET_BUFFER_SCAN_SPAN);
+   bool span=    (flags & SECRET_BUFFER_SCAN_SPAN) || cset->match_span;
    bool span_started= false;
    size_t span_mark= 0, prev_mark= reverse? parse_state->lim : parse_state->pos;
 
