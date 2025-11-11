@@ -338,12 +338,83 @@ See also: L</unmask_secrets_to>.
 
 =method index
 
-  $ofs= $buf->index($str);
-  $ofs= $buf->index($str, $from_offset);
+  $ofs= $buf->index($str_or_charclass, $from_offset=0);
 
-Like Perl's C<index> function, returns -1 if not found, or else the offset of the start of the
-string you asked it to look for.  You can specify an optional starting offset to search from.
-Negative starting offsets search from that many characters before the end of the buffer.
+Like Perl's C<index> function, it scans the string from an optional offset and
+returns the location the string was found, or -1 if it doesn't exist.  This can
+also scan for a character class provided in a C<< qr// >> expression, like the
+L</scan> function.  C<$from_offset> may be negative to count backward from the
+end of the buffer.
+
+=method rindex
+
+  $ofs= $buf->index($str_or_charclass, $from_offset=-1);
+
+Like L</index> but in reverse, where the default C<$from_offset> is -1 (end of
+buffer).
+
+=method scan
+
+  ($ofs, $len)= $buf->scan($s, $flags=0, $ofs=0, $len=undef);
+
+This function scans through the buffer looking for the first match of a string
+or a character class.  The scan can optionally be limited to an offset and
+length describing a substring of the buffer.  The return value is the position
+of the start of the match, and number of I<bytes> matched (which can be greater
+than one when matching a character class in UTF-8, or if C<SCAN_SPAN> flag is
+requested).  Unlike C<index> or C<rindex>, on failure the return value is an
+offset equal to the limit of the scan (C<$ofs> + C<$len>) and a length of zero.
+
+Eventually, this function may be enhanced with full regex support, but for now
+it is limited to one character class and optionally a '+' modifier as an alias
+for flag SCAN_SPAN.  Until that enhancement occurs, your regex notation must
+start with '[' and must end with either ']' or '+'.
+
+  ($ofs, $len)= $buf->scan(qr/[\w]+/); # implies SCAN_SPAN
+
+The following flags (exported as constants) are supported:
+
+=over
+
+=item UTF8
+
+=item UTF16BE
+
+=item UTF16LE
+
+Treat the buffer as the specified character set, and die if any character
+scanned is not valid.  (unpaired surrogates, overlong encodings, etc).  This
+also expands the definition of unicode character classes beyond the default of
+just ASCII.
+
+If you are searching for a plain string, B<< you must also encode the search
+string with the same encoding >>:
+
+  my $str= "\x{100}";
+  utf8::encode($str);
+  my ($ofs, $len)= $buf->scan($str, UTF8);
+
+Note that C<$ofs> and C<$len> are still byte positions, and still suitable for
+L</substr> on the buffer, which is different from Perl's substr on a unicode
+string which works in terms of characters.
+
+=item SCAN_REVERSE
+
+Walk backward from the end of the buffer (or specified span) looking for a
+match.  A failed match returns an C<$ofs> equal to the one supplied, and
+C<$len> of 0.
+
+=item SCAN_SPAN
+
+Once found, keep scanning until the buffer does *not* match.  This is the same
+as using a regex that ends with C<'+'>, but applies to the string searches as
+well, and works with SCAN_REVERSE to find the longest run of a character class.
+
+=item SCAN_NEGATE
+
+Invert the supplied character class.  Has no effect when using a literal stirng.
+
+=back
 
 =method substr
 
@@ -351,8 +422,9 @@ Negative starting offsets search from that many characters before the end of the
   $buf->substr(0,5);          # First 5 characters of buffer
   $buf->substr(0,5,$buf2);    # replace first 5 characters with content of $buf2
 
-This is exactly like Perl's C<substr> function, but it returns C<Crypt::SecretBuffer> objects,
-and they are not an lvalue that alters the original.
+This is exactly like Perl's C<substr> function, but it returns
+C<Crypt::SecretBuffer> objects, and they are not an lvalue that alters the
+original.  The offset and length are always bytes.
 
 =method append_random
 

@@ -1,7 +1,7 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
-use Crypt::SecretBuffer qw( secret SCAN_SPAN );
+use Crypt::SecretBuffer qw( secret SCAN_SPAN UTF8 );
 
 subtest index_str => sub {
    my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
@@ -18,15 +18,13 @@ subtest index_str => sub {
 
 subtest rindex_str => sub {
    my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
-   is($buf->rindex('abc'), 7, 'find first substring');
-   is($buf->rindex('123'), 3, 'find middle substring');
+   is($buf->rindex('abc'), 7, 'find second "abc"');
    is($buf->rindex("\0"), 6, 'find NUL byte');
-   is($buf->rindex("\0", 7), 6, 'find NUL byte from ofs');
-   is($buf->rindex('abc', 4), 0, 'find substring after offset');
+   is($buf->rindex("\0", 6), 6, 'find NUL byte from its own ofs');
+   is($buf->rindex('abc', 1), 0, 'find substring from within length of substring');
    is($buf->rindex('nope'), -1, 'return -1 when not found');
-   is($buf->rindex('abc', -4), -1, 'negative offset beyond substring');
    is($buf->rindex("a", 0), 0, 'find first byte starting from first byte');
-   is($buf->rindex("6", -13), 0, 'find last byte using negative index');
+   is($buf->rindex("6", -1), 12, 'find last byte using negative index');
 };
 
 sub _render_char {
@@ -81,14 +79,20 @@ subtest charset => sub {
 };
 
 subtest index_charset => sub {
-   my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
-   is($buf->index(qr/[0-9]/), 3, 'find first digit');
+   my $buf = Crypt::SecretBuffer->new("abc123\0abc456" );
+   is( $buf->index(qr/[0-9]/), 3, 'find first digit' );
+   is( $buf->rindex(qr/[0-9]/), 12, 'find last digit' );
+   is( $buf->index(qr/[a-z]/), 0, 'find first alpha' );
+   is( $buf->rindex(qr/[a-z]/), 9, 'find last alpha' );
 };
 
 subtest scan_charset => sub {
-   my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
-   is( [$buf->scan(qr/[0-9]/)], [3,6], 'find segment starting at digit');
-   is( [$buf->scan(qr/[0-9]/, SCAN_SPAN)], [3,6], 'find span of digits');
+   my $str= "abc123\x{100}abc456";
+   utf8::encode($str);
+   my $buf = Crypt::SecretBuffer->new($str);
+   is( [$buf->scan(qr/[0-9]/)], [3,1], 'find digit' );
+   is( [$buf->scan(qr/[0-9]/, SCAN_SPAN)], [3,3], 'find span of digits' );
+   is( [$buf->scan(qr/[^a-z0-9]/, UTF8)], [6, 2], 'single char of unicode spans 2 bytes' );
 };
 
 done_testing;

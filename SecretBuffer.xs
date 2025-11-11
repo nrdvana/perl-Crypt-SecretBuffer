@@ -1231,102 +1231,84 @@ clear(buf)
       secret_buffer_realloc(buf, 0);
       XSRETURN(1); /* self, for chaining */
 
-void
-scan(buf, subject, ofs= 0, lim_sv= &PL_sv_undef, flags=0)
+IV
+index(buf, pattern, ofs= 0)
    auto_secret_buffer buf
-   SV *subject
+   SV *pattern
    IV ofs
-   SV *lim_sv
-   IV flags
-   ALIAS:
-      index  = 1
-      rindex = 2
    INIT:
-      secret_buffer_parse parse_state;
-      REGEXP *rx= SvRX(subject);
+      secret_buffer_parse parse;
+      Zero(&parse, 1, parse);
+      parse.pos= normalize_offset(ofs, buf->len);
+      parse.lim= buf->len;
+   CODE:
+      if (secret_buffer_scan(buf, pattern, &parse, 0))
+         RETVAL= parse.pos;
+      else {
+         if (parse.error)
+            croak("%s", parse.error);
+         RETVAL= -1;
+      }
+   OUTPUT:
+      RETVAL
+
+IV
+rindex(buf, pattern, ofs= -1)
+   auto_secret_buffer buf
+   SV *pattern
+   IV ofs
+   INIT:
+      secret_buffer_parse parse;
+      Zero(&parse, 1, parse);
+      parse.pos= 0;
+      ofs= normalize_offset(ofs, buf->len);
+      // The ofs specifies the *start* of the match, not the maximum byte pos
+      // that could be part of the match.  If a charset, add one to get 'lim',
+      // and if a string, add string byte length to get 'lim'
+      if (SvRX(pattern))
+         parse.lim= ofs + 1;
+      else {
+         STRLEN len; // needs to be byte count, so can't SvCUR without converting to bytes first
+         const char *str= SvPVbyte(pattern, len);
+         parse.lim= ofs + len;
+      }
+      // re-clamp lim to end of buffer
+      if (parse.lim > buf->len) parse.lim= buf->len;
+   CODE:
+      if (secret_buffer_scan(buf, pattern, &parse, SECRET_BUFFER_SCAN_REVERSE))
+         RETVAL= parse.pos;
+      else {
+         if (parse.error)
+            croak("%s", parse.error);
+         RETVAL= -1;
+      }
+   OUTPUT:
+      RETVAL
+
+void
+scan(buf, pattern, flags= 0, ofs= 0, len_sv= &PL_sv_undef)
+   auto_secret_buffer buf
+   SV *pattern
+   IV flags
+   IV ofs
+   SV *len_sv
+   INIT:
+      secret_buffer_parse parse;
       bool reverse= flags & SECRET_BUFFER_SCAN_REVERSE;
       bool find_span= flags & SECRET_BUFFER_SCAN_SPAN;
+      IV len= !SvOK(len_sv)? buf->len : SvIV(len_sv);
       // lim was captured as an SV so that undef can be used to indicate
       // end of the buffer.
-      Zero(&parse_state, 1, parse_state);
-      parse_state.lim= lim_sv && SvOK(lim_sv)? SvIV(lim_sv) : buf->len;
-      parse_state.encoding= (flags & SECRET_BUFFER_ENCODING_MASK);
+      Zero(&parse, 1, parse);
+      parse.pos= normalize_offset(ofs, buf->len);
+      parse.lim= parse.pos + normalize_offset(len, buf->len - parse.pos);
+      parse.encoding= (flags & SECRET_BUFFER_ENCODING_MASK);
    PPCODE:
-      /* normalize negative offset, and clamp to valid range */
-      ofs= normalize_offset(ofs, buf->len);
-      if (ix == 2) {
-         flags |= SECRET_BUFFER_SCAN_REVERSE;
-         // for rindex, the ofs param is actually the 'max'
-         parse_state.lim= ofs < buf->len? ofs+1 : buf->len;
-         parse_state.pos= SvOK(lim_sv)? normalize_offset(SvIV(lim_sv), buf->len) : 0;
-      }
-      else {
-         parse_state.pos= ofs;
-         parse_state.lim= SvOK(lim_sv)? normalize_offset(SvIV(lim_sv), buf->len) : buf->len;
-      }
-      
-      if (rx) { // subject is a regex, currently restricted to 1 charclass
-         secret_buffer_charset *cset= secret_buffer_charset_from_regexpref(subject);
-         // This reports errors that interrupted the scan, like invalid character encoding.
-         if (!secret_buffer_scan(buf, cset, &parse_state, flags)
-            && parse_state.error)
-            croak("%s", parse_state.error);
-         // A failed match is just indicated by the parse positions
-      }
-      else { // subject is a plain string
-         STRLEN len;
-         const char *str= SvPVbyte(subject, len);
-         // get this edge case out of the way
-         if (len == 0) {
-            IV pos= reverse? parse_state.lim : parse_state.pos;
-            PUSHs(sv_2mortal(newSViv(pos)));
-            XSRETURN(1);
-         }
-         char first_ch= *str,
-              *pmin= buf->data + parse_state.pos,
-              *pmax= buf->data + parse_state.lim - len;
-         if (reverse) {
-            while (pmin <= pmax) {
-               if (*pmax == first_ch && 0 == memcmp(pmax, str, len)) {
-                  parse_state.pos= pmax - buf->data;
-                  parse_state.lim= parse_state.pos + len;
-                  if (find_span) {
-                     while (pmin < pmax && pmax[-1] == first_ch && 0 == memcmp(pmax-1, str, len))
-                        --pmax;
-                     parse_state.pos= pmax - buf->data;
-                  }
-                  break;
-               }
-               --pmax;
-            }
-         } else {
-            while (pmin <= pmax) {
-               if (*pmin == first_ch && 0 == memcmp(pmin, str, len)) {
-                  parse_state.pos= pmin - buf->data;
-                  parse_state.lim= parse_state.pos + len;
-                  if (find_span) {
-                     while (pmin < pmax && pmin[1] == first_ch && 0 == memcmp(pmin+1, str, len))
-                        ++pmin;
-                     parse_state.lim= pmin - buf->data + len;
-                  }
-                  break;
-               }
-               ++pmin;
-            }
-         }
-         if (pmin > pmax) { // Not found, describe a zero-length range
-            parse_state.pos= pmin - buf->data;
-            parse_state.lim= parse_state.pos;
-         }
-      }
-      // If implementing index or rindex, return -1 as the not-found value
-      if (ix) {
-         IV ret= (parse_state.pos == parse_state.lim)? -1 : parse_state.pos;
-         PUSHs(sv_2mortal(newSViv(ret)));
-      } else {
-         PUSHs(sv_2mortal(newSViv(parse_state.pos)));
-         PUSHs(sv_2mortal(newSViv(parse_state.lim)));
-      }
+      secret_buffer_scan(buf, pattern, &parse, flags);
+      if (parse.error)
+         croak("%s", parse.error);
+      PUSHs(sv_2mortal(newSViv(parse.pos)));
+      PUSHs(sv_2mortal(newSViv(parse.lim - parse.pos)));
 
 void
 substr(buf, ofs, count_sv=NULL, replacement=NULL)

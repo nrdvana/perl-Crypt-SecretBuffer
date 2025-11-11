@@ -1,15 +1,42 @@
 
+/* These local parse functions are independenct of the SecretBuffer instance,
+ * needing only the 'data' pointer to whch the parse_state refers.
+ * The pos/lim of the parse state must already be checked against the length
+ * of the data before calling these.
+ */
 static int parse_prev_codepoint(secret_buffer_parse *parse_state, const U8 *data);
 static int parse_next_codepoint(secret_buffer_parse *parse_state, const U8 *data);
-static bool parse_scan_bytes(secret_buffer_parse *parse_state, const U8 *data, const secret_buffer_charset *cset, int flags);
-static bool parse_scan_codepoints(secret_buffer_parse *parse_state, const U8 *data, const secret_buffer_charset *cset, int flags);
+static bool parse_scan_charset_bytes(secret_buffer_parse *parse_state, const U8 *data, const secret_buffer_charset *cset, int flags);
+static bool parse_scan_charset_codepoints(secret_buffer_parse *parse_state, const U8 *data, const secret_buffer_charset *cset, int flags);
+static bool parse_scan_bytestr(secret_buffer_parse *parse_state, const U8 *data, const U8 *bytestr, size_t bytestr_len, int flags);
 
+/* Public API: Scan for a pattern which may be a regex or literal string.
+ * Regexes are currently limited to a single charclass.
+ */
 bool secret_buffer_scan(
+   secret_buffer *sb,
+   SV *pattern,
+   secret_buffer_parse *parse_state,
+   int flags
+) {
+   REGEXP *rx= SvRX(pattern);
+   if (rx) {
+      secret_buffer_charset *cset= secret_buffer_charset_from_regexpref(pattern);
+      return secret_buffer_scan_charset(sb, cset, parse_state, flags);
+   } else {
+      STRLEN len;
+      U8 *str= (U8*) SvPVbyte(pattern, len);
+      return secret_buffer_scan_bytestr(sb, str, len, parse_state, flags);
+   }      
+}
+
+/* Public API: Scan for a pattern which is a set of characters */
+bool secret_buffer_scan_charset(
    secret_buffer *sb,
    secret_buffer_charset *cset,
    secret_buffer_parse *parse_state,
-   int flags)
-{
+   int flags
+) {
    // Sanity check this parse state vs. the buffer
    if (parse_state->lim > sb->len || parse_state->pos > parse_state->lim) {
       parse_state->error= "Invalid parse boundaries";
@@ -21,53 +48,77 @@ bool secret_buffer_scan(
 
    // byte matching gets to use a more efficient algorithm
    return parse_state->encoding == SECRET_BUFFER_ENCODING_ASCII
-      ? parse_scan_bytes(parse_state, (U8*) sb->data, cset, flags)
-      : parse_scan_codepoints(parse_state, (U8*) sb->data, cset, flags);
+      ? parse_scan_charset_bytes(parse_state, (U8*) sb->data, cset, flags)
+      : parse_scan_charset_codepoints(parse_state, (U8*) sb->data, cset, flags);
+}
+
+/* Public API: Scan for a pattern which is a literal string of bytes.
+ * The caller is responsible for encoding them in the same format as requested
+ * by parse_state->encoding.
+ */
+bool secret_buffer_scan_bytestr(
+   secret_buffer *sb, char *data, size_t datalen,
+   secret_buffer_parse *parse_state, int flags
+) {
+   // Sanity check this parse state vs. the buffer
+   if (parse_state->lim > sb->len || parse_state->pos > parse_state->lim) {
+      parse_state->error= "Invalid parse boundaries";
+      return false;
+   }
+   parse_state->error = NULL;
+   if (parse_state->pos >= parse_state->lim) // empty range
+      return false;
+
+   return parse_scan_bytestr(parse_state, sb->data, data, datalen, flags);
 }
 
 /* Scan raw bytes using only the bitmap */
-static bool parse_scan_bytes(
+static bool parse_scan_charset_bytes(
    secret_buffer_parse *parse_state,
    const U8 *data,
    const secret_buffer_charset *cset,
    int flags
 ) {
-   bool negate= (flags & SECRET_BUFFER_SCAN_NEGATE);
+   bool negate=  (flags & SECRET_BUFFER_SCAN_NEGATE);
    bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
-   bool span= (flags & SECRET_BUFFER_SCAN_SPAN);
-   bool span_started= false;
+   bool span=    (flags & SECRET_BUFFER_SCAN_SPAN);
+   int step= reverse? -1 : 1;
+   const U8 *pos= reverse? data + parse_state->lim-1 : data + parse_state->pos,
+            *lim= reverse? data + parse_state->pos-1 : data + parse_state->lim,
+            *span_start= NULL;
+   //warn("scan_charset_bytes pos=%d lim=%d len=%d",
+   //   (int)parse_state->pos,
+   //   (int)parse_state->lim,
+   //   (int)(parse_state->lim - parse_state->pos));
 
-   size_t pos = parse_state->pos;
-   size_t lim = parse_state->lim;
-   while (pos < lim) {
-      U8 byte= reverse? data[--lim] : data[pos++];
-      if (sbc_bitmap_test(cset->bitmap, byte) != negate) {
+   while (pos != lim) {
+      if (sbc_bitmap_test(cset->bitmap, *pos) != negate) {
          // Found.  Now are we looking for a span?
-         if (span_started)
+         if (span_start)
             break;
-         parse_state->pos= pos;
-         parse_state->lim= lim;
-         if (!span)
+         if (!span) {
+            parse_state->pos= pos - data;
+            parse_state->lim= parse_state->pos + 1;
             return true;
-         span_started= true;
+         }
+         span_start= pos;
          negate= !negate;
       }
+      pos += step;
    }
-   // reached end of defined range
-   if (span_started) { // and implicitly ends span
-      if (reverse)
-         parse_state->pos= lim; // *lim is a match, *pos is not
-      else
-         parse_state->lim= pos; // *pos is the first non-match
-      return true;
+   // reached end of defined range, and implicitly ends span
+   if (reverse) {
+      parse_state->pos= pos + 1 - data;
+      parse_state->lim= span_start? span_start + 1 - data : parse_state->pos;
+   } else {
+      parse_state->lim= pos - data;
+      parse_state->pos= span_start? span_start - data : parse_state->lim;
    }
-   parse_state->pos= pos;
-   parse_state->lim= lim;
-   return false;
+   return span_start != NULL;
 }
 
 // Called by secret_buffer_scan, which verified the range of th
-static bool parse_scan_codepoints(
+static bool parse_scan_charset_codepoints(
    secret_buffer_parse *parse_state,
    const U8 *data,
    const secret_buffer_charset *cset,
@@ -78,32 +129,43 @@ static bool parse_scan_codepoints(
    bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
    bool span= (flags & SECRET_BUFFER_SCAN_SPAN);
    bool span_started= false;
-   ssize_t span_mark= -1;
+   size_t span_mark= 0, prev_mark= reverse? parse_state->lim : parse_state->pos;
 
    while (parse_state->pos < parse_state->lim) {
-      int codepoint= reverse? parse_prev_codepoint(parse_state, data) : parse_next_codepoint(parse_state, data);
-      if (codepoint < 0)
+      int codepoint= reverse? parse_prev_codepoint(parse_state, data)
+                            : parse_next_codepoint(parse_state, data);
+      if (codepoint < 0) // encoding error
          return false;
       if (sbc_test_codepoint(aTHX_ cset, codepoint) != negate) {
-         // Found.  Now are we looking for a span?
+         // Found.  Mark boundaries of char.
+         // Now are we looking for a span?
          if (span_started)
             break;
-         if (!span)
+         if (!span) {
+            if (reverse) {
+               parse_state->pos= parse_state->lim;
+               parse_state->lim= prev_mark;
+            } else {
+               parse_state->lim= parse_state->pos;
+               parse_state->pos= prev_mark;
+            }
             return true;
+         }
          span_started= true;
-         span_mark= reverse? parse_state->pos : parse_state->lim;
+         span_mark= prev_mark;
          negate= !negate;
       }
+      prev_mark= reverse? parse_state->lim : parse_state->pos;
    }
    // reached end of defined range
    if (span_started) { // and implicitly ends span
       if (reverse) {
-         parse_state->pos= parse_state->lim;  // *lim is a match, *pos is not
+         parse_state->pos= prev_mark;
          parse_state->lim= span_mark;
       }
       else {
-         parse_state->lim= parse_state->pos; // *pos is the first non-match
          parse_state->pos= span_mark;
+         parse_state->lim= prev_mark;
       }
       return true;
    }
@@ -259,3 +321,65 @@ static int parse_prev_codepoint(secret_buffer_parse *parse_state, const U8 *data
    return cp;
 }
 
+bool parse_scan_bytestr(secret_buffer_parse *parse_state, const U8 *data,
+   const U8 *bytestr, size_t bytestr_len, int flags
+) {
+   bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
+   bool span=    (flags & SECRET_BUFFER_SCAN_SPAN);
+   parse_state->error = NULL;
+   if (parse_state->pos >= parse_state->lim) // empty range
+      return false;
+
+   // get this edge case out of the way
+   if (bytestr_len == 0) {
+      if (reverse)
+         parse_state->pos= parse_state->lim;
+      else
+         parse_state->lim= parse_state->pos;
+      return true;
+   }
+
+   // Consider a reduced range where the length of the string is removed from
+   // the buffer limit, resulting in a pointer to the last char ('pmax') which
+   // possibly match 'bytestr'.
+   const U8 first_ch= *bytestr,
+           *pmin= data + parse_state->pos,
+           *pmax= data + parse_state->lim - bytestr_len;
+   if (reverse) {
+      while (pmin <= pmax) {
+         if (*pmax == first_ch && 0 == memcmp(pmax, bytestr, bytestr_len)) {
+            parse_state->pos= pmax - data;
+            parse_state->lim= parse_state->pos + bytestr_len;
+            if (span) {
+               while (pmax - pmin >= bytestr_len && pmax[-bytestr_len] == first_ch
+                  && 0 == memcmp(pmax-bytestr_len, bytestr, bytestr_len))
+                  pmax -= bytestr_len;
+               parse_state->pos= pmax - data;
+            }
+            break;
+         }
+         --pmax;
+      }
+   } else {
+      while (pmin <= pmax) {
+         if (*pmin == first_ch && 0 == memcmp(pmin, bytestr, bytestr_len)) {
+            parse_state->pos= pmin - data;
+            parse_state->lim= parse_state->pos + bytestr_len;
+            if (span) {
+               while (pmax - pmin >= bytestr_len && pmin[bytestr_len] == first_ch
+                  && 0 == memcmp(pmin+bytestr_len, bytestr, bytestr_len))
+                  pmin += bytestr_len;
+               parse_state->lim= pmin - data + bytestr_len;
+            }
+            break;
+         }
+         ++pmin;
+      }
+   }
+   if (pmin > pmax) { // Not found, describe a zero-length range
+      parse_state->pos= pmin - data;
+      parse_state->lim= parse_state->pos;
+      return false;
+   }
+   return true;
+}

@@ -14,17 +14,11 @@ typedef struct {
    SV *wrapper;
 } secret_buffer;
 
-typedef struct {
-   uint64_t bitmap[4];   // covers 0..255 codepoints
-   REGEXP *rx;           // refers to Regexp object this was derived from
-   #define SECRET_BUFFER_CHARSET_NOUNI 0
-   #define SECRET_BUFFER_CHARSET_ALLUNI 1
-   #define SECRET_BUFFER_CHARSET_TESTUNI 2
-   int unicode_above_7F; // controls action when matching against unicode
-} secret_buffer_charset;
+struct secret_buffer_charset;
+typedef struct secret_buffer_charset secret_buffer_charset;
 
-/* Given a Regexp-type SV (not the ref to it) either return a cached
- * secret_buffer_charset from a previous call, or build a new one by
+/* Given a Regexp-ref either return a cached secret_buffer_charset from a
+ * previous call, or build a new one by
  * analyzing the regexp, then cache it in MAGIC.
  * The regexp must be a single character class specification and nothing else,
  * but it may use the case-insensitive flag.  If the pattern uses anything more
@@ -82,11 +76,12 @@ typedef struct {
 #define SECRET_BUFFER_SCAN_REVERSE 0x10
 #define SECRET_BUFFER_SCAN_NEGATE  0x20
 #define SECRET_BUFFER_SCAN_SPAN    0x40
-extern bool secret_buffer_scan(
-   secret_buffer *sb,
-   secret_buffer_charset *cset,
-   secret_buffer_parse *parse_state,
-   int flags);
+extern bool secret_buffer_scan(secret_buffer *sb, SV *pattern,
+                               secret_buffer_parse *parse_state, int flags);
+extern bool secret_buffer_scan_charset(secret_buffer *sb, secret_buffer_charset *cset,
+                                       secret_buffer_parse *parse_state, int flags);
+extern bool secret_buffer_scan_bytestr(secret_buffer *sb, char *data, size_t datalen,
+                                       secret_buffer_parse *parse_state, int flags);
 
 /* Create a new Crypt::SecretBuffer object with a mortal ref and return its secret_buffer
  * struct pointer.

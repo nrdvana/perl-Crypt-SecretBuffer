@@ -13,6 +13,15 @@
  * in other source files as well.
  */
 
+struct secret_buffer_charset {
+   uint64_t bitmap[4];   // covers 0..255 codepoints
+   REGEXP *rx;           // refers to Regexp object this was derived from
+   #define SECRET_BUFFER_CHARSET_NOUNI 0
+   #define SECRET_BUFFER_CHARSET_ALLUNI 1
+   #define SECRET_BUFFER_CHARSET_TESTUNI 2
+   int unicode_above_7F; // controls action when matching against unicode
+};
+
 /* MAGIC vtable for cached charset */
 static int secret_buffer_charset_magic_free(pTHX_ SV *sv, MAGIC *mg) {
    if (mg->mg_ptr) {
