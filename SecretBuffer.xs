@@ -1232,50 +1232,37 @@ clear(buf)
       XSRETURN(1); /* self, for chaining */
 
 IV
-index(buf, pattern, ofs= 0)
+index(buf, pattern, ofs_sv= &PL_sv_undef)
    auto_secret_buffer buf
    SV *pattern
-   IV ofs
+   SV *ofs_sv
+   ALIAS:
+      rindex = 1
    INIT:
       secret_buffer_parse parse;
+      int flags= 0;
       Zero(&parse, 1, parse);
-      parse.pos= normalize_offset(ofs, buf->len);
-      parse.lim= buf->len;
-   CODE:
-      if (secret_buffer_scan(buf, pattern, &parse, 0))
-         RETVAL= parse.pos;
-      else {
-         if (parse.error)
-            croak("%s", parse.error);
-         RETVAL= -1;
+      if (ix == 0) { // index (forward)
+         parse.pos= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : 0, buf->len);
+         parse.lim= buf->len;
+      } else { // rindex (reverse)
+         IV max= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : -1, buf->len);
+         flags= SECRET_BUFFER_SCAN_REVERSE;
+         // The ofs specifies the *start* of the match, not the maximum byte pos
+         // that could be part of the match.  If pattern is a charset, add one to get 'lim',
+         // and if pattern is a string, add string byte length to get 'lim'.
+         if (SvRX(pattern))
+            parse.lim= max + 1;
+         else {
+            STRLEN len; // needs to be byte count, so can't SvCUR without converting to bytes first
+            const char *str= SvPVbyte(pattern, len);
+            parse.lim= max + len;
+         }
+         // re-clamp lim to end of buffer
+         if (parse.lim > buf->len) parse.lim= buf->len;
       }
-   OUTPUT:
-      RETVAL
-
-IV
-rindex(buf, pattern, ofs= -1)
-   auto_secret_buffer buf
-   SV *pattern
-   IV ofs
-   INIT:
-      secret_buffer_parse parse;
-      Zero(&parse, 1, parse);
-      parse.pos= 0;
-      ofs= normalize_offset(ofs, buf->len);
-      // The ofs specifies the *start* of the match, not the maximum byte pos
-      // that could be part of the match.  If a charset, add one to get 'lim',
-      // and if a string, add string byte length to get 'lim'
-      if (SvRX(pattern))
-         parse.lim= ofs + 1;
-      else {
-         STRLEN len; // needs to be byte count, so can't SvCUR without converting to bytes first
-         const char *str= SvPVbyte(pattern, len);
-         parse.lim= ofs + len;
-      }
-      // re-clamp lim to end of buffer
-      if (parse.lim > buf->len) parse.lim= buf->len;
    CODE:
-      if (secret_buffer_scan(buf, pattern, &parse, SECRET_BUFFER_SCAN_REVERSE))
+      if (secret_buffer_scan(buf, pattern, &parse, flags))
          RETVAL= parse.pos;
       else {
          if (parse.error)
