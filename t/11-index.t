@@ -1,7 +1,7 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
-use Crypt::SecretBuffer qw( secret SCAN_SPAN UTF8 );
+use Crypt::SecretBuffer qw( secret SCAN_SPAN UTF8 SCAN_REVERSE );
 
 subtest index_str => sub {
    my $buf = Crypt::SecretBuffer->new("abc123\0abc456");
@@ -87,12 +87,15 @@ subtest index_charset => sub {
 };
 
 subtest scan_charset => sub {
-   my $str= "abc123\x{100}abc456";
+   my $str= "abc123\x{100}\x{1000}abc456";
    utf8::encode($str);
    my $buf = Crypt::SecretBuffer->new($str);
    is( [$buf->scan(qr/[0-9]/)], [3,1], 'find digit' );
    is( [$buf->scan(qr/[0-9]/, SCAN_SPAN)], [3,3], 'find span of digits' );
    is( [$buf->scan(qr/[^a-z0-9]/, UTF8)], [6, 2], 'single char of unicode spans 2 bytes' );
+   is( [$buf->scan(qr/[^a-z0-9]+/, UTF8)], [6, 5], 'unicode spans 2+3 bytes' );
+   is( [$buf->scan(qr/[^a-z0-9]/, UTF8|SCAN_REVERSE)], [8, 3], 'second char of unicode spans 3 bytes' );
+   is( [$buf->scan(qr/[^a-z0-9]+/, UTF8|SCAN_REVERSE)], [6, 5], 'unicode spans 2+3 bytes' );
 };
 
 done_testing;
