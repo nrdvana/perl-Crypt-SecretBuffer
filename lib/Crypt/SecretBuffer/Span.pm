@@ -16,7 +16,7 @@ package Crypt::SecretBuffer::Span;
   # Try parsing a '[' from the current position
   if ($s->parse('[')) {
     # start of a INI-style "[header]"
-    my $header= $s->parse(qr/[^]\n]+/);  # capture until ']' or end of line
+    $header= $s->parse(qr/[^]\n]+/);  # capture until ']' or end of line
     
     $s->parse(']')
       or die "Didn't find ']' at end of header";

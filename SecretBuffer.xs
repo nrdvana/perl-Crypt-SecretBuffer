@@ -133,10 +133,12 @@ static void* memmem(
 static int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
 static int secret_buffer_stringify_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
 static int secret_buffer_async_result_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
+static int secret_buffer_span_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *params);
 #else
 #define secret_buffer_magic_dup 0
 #define secret_buffer_stringify_magic_dup 0
 #define secret_buffer_async_result_magic_dup 0
+#define secret_buffer_span_magic_dup 0
 #endif
 
 static int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg);
@@ -176,6 +178,50 @@ static MGVTBL secret_buffer_async_result_magic_vtbl = {
 #endif
 };
 
+static int secret_buffer_span_magic_free(pTHX_ SV *sv, MAGIC *mg);
+static MGVTBL secret_buffer_span_magic_vtbl = {
+   NULL, NULL, NULL, NULL,
+   secret_buffer_span_magic_free,
+   NULL,
+   secret_buffer_span_magic_dup
+#ifdef MGf_LOCAL
+   ,NULL
+#endif
+};
+
+typedef void* secret_buffer_X_auto_ctor(SV *owner);
+void* secret_buffer_X_from_magic(SV *obj, int flags,
+   const MGVTBL *mg_vtbl, const char *mg_desc,
+   secret_buffer_X_auto_ctor *auto_ctor
+) {
+   SV *sv;
+   MAGIC *magic;
+
+   if ((!obj || !SvOK(obj)) && (flags & SECRET_BUFFER_MAGIC_UNDEF_OK))
+      return NULL;
+
+   if (!sv_isobject(obj)) {
+      if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
+         croak("Not an object");
+      return NULL;
+   }
+   sv = SvRV(obj);
+   if (SvMAGICAL(sv) && (magic = mg_findext(sv, PERL_MAGIC_ext, mg_vtbl)))
+      return magic->mg_ptr;
+
+   if (flags & SECRET_BUFFER_MAGIC_AUTOCREATE && auto_ctor) {
+      void *data= auto_ctor(sv);
+      magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, mg_vtbl, (const char*) data, 0);
+#ifdef USE_ITHREADS
+      magic->mg_flags |= MGf_DUP;
+#endif
+      return data;
+   }
+   if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
+      croak("Object lacks '%s' magic", mg_desc);
+   return NULL;
+}
+
 /**********************************************************************************************\
 * SecretBuffer C API
 \**********************************************************************************************/
@@ -189,35 +235,17 @@ static MGVTBL secret_buffer_async_result_magic_vtbl = {
  * Specify UNDEF_OK if you want input C<undef> to translate to C<NULL> even when OR_DIE is
  * requested.
  */
+void *secret_buffer_auto_ctor(SV *owner) {
+   secret_buffer *buf= NULL;
+   Newxz(buf, 1, secret_buffer);
+   buf->wrapper= owner;
+   return buf;
+}
 secret_buffer* secret_buffer_from_magic(SV *obj, int flags) {
-   SV *sv;
-   MAGIC *magic;
-   secret_buffer *buf;
-
-   if ((!obj || !SvOK(obj)) && (flags & SECRET_BUFFER_MAGIC_UNDEF_OK))
-      return NULL;
-
-   if (!sv_isobject(obj)) {
-      if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
-         croak("Not an object");
-      return NULL;
-   }
-   sv = SvRV(obj);
-   if (SvMAGICAL(sv) && (magic = mg_findext(sv, PERL_MAGIC_ext, &secret_buffer_magic_vtbl)))
-      return (secret_buffer*) magic->mg_ptr;
-
-   if (flags & SECRET_BUFFER_MAGIC_AUTOCREATE) {
-      Newxz(buf, 1, secret_buffer);
-      buf->wrapper= sv;
-      magic = sv_magicext(sv, NULL, PERL_MAGIC_ext, &secret_buffer_magic_vtbl, (const char*) buf, 0);
-#ifdef USE_ITHREADS
-      magic->mg_flags |= MGf_DUP;
-#endif
-      return buf;
-   }
-   if (flags & SECRET_BUFFER_MAGIC_OR_DIE)
-      croak("Object lacks 'secret_buffer' magic");
-   return NULL;
+   return (secret_buffer*) secret_buffer_X_from_magic(
+      obj, flags,
+      &secret_buffer_magic_vtbl, "secret_buffer",
+      secret_buffer_auto_ctor);
 }
 
 /* Create a new Crypt::SecretBuffer object with a mortal ref and return the secret_buffer.
@@ -468,9 +496,54 @@ IV secret_buffer_append_read(secret_buffer *buf, PerlIO *stream, size_t count) {
       return secret_buffer_append_sysread(buf, stream, count);
 }
 
+#include "secret_buffer_console.c"
+#include "secret_buffer_async_write.c"
+#include "secret_buffer_charset.c"
+#include "secret_buffer_scan.c"
+#include "secret_buffer_span.c"
+
 /**********************************************************************************************\
-* SecretBuffer stringify magic
+* SecretBuffer magic
 \**********************************************************************************************/
+
+/*
+ * SecretBuffer Magic
+ */
+
+int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg) {
+   secret_buffer *buf= (secret_buffer*) mg->mg_ptr;
+   if (buf) {
+      secret_buffer_realloc(buf, 0);
+      if (buf->stringify_sv)
+         sv_2mortal(buf->stringify_sv);
+      Safefree(mg->mg_ptr);
+      mg->mg_ptr = NULL;
+   }
+   return 0;
+}
+
+#ifdef USE_ITHREADS
+int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
+   secret_buffer *clone, *orig = (secret_buffer *)mg->mg_ptr;
+   PERL_UNUSED_VAR(param);
+   Newxz(clone, 1, secret_buffer);
+   clone->wrapper= mg->mg_obj;
+   mg->mg_ptr = (char *)clone;
+   secret_buffer_realloc(clone, orig->capacity);
+   if (orig->capacity)
+      memcpy(clone->data, orig->data, orig->capacity);
+   clone->len= orig->len;
+   return 0;
+}
+#endif
+
+/* Aliases for typemap */
+typedef secret_buffer  *auto_secret_buffer;
+typedef secret_buffer  *maybe_secret_buffer;
+
+/*
+ * SecretBuffer stringify SV magic
+ */
 
 int secret_buffer_stringify_magic_get(pTHX_ SV *sv, MAGIC *mg) {
    secret_buffer *buf= (secret_buffer *)mg->mg_ptr;
@@ -516,48 +589,8 @@ SV* secret_buffer_get_stringify_sv(secret_buffer *buf) {
    return sv;
 }
 
-/*
- * SecretBuffer Magic
- */
-
-int secret_buffer_magic_free(pTHX_ SV *sv, MAGIC *mg) {
-   secret_buffer *buf= (secret_buffer*) mg->mg_ptr;
-   if (buf) {
-      secret_buffer_realloc(buf, 0);
-      if (buf->stringify_sv)
-         sv_2mortal(buf->stringify_sv);
-      Safefree(mg->mg_ptr);
-      mg->mg_ptr = NULL;
-   }
-   return 0;
-}
-
-#ifdef USE_ITHREADS
-int secret_buffer_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
-   secret_buffer *clone, *orig = (secret_buffer *)mg->mg_ptr;
-   PERL_UNUSED_VAR(param);
-   Newxz(clone, 1, secret_buffer);
-   clone->wrapper= mg->mg_obj;
-   mg->mg_ptr = (char *)clone;
-   secret_buffer_realloc(clone, orig->capacity);
-   if (orig->capacity)
-      memcpy(clone->data, orig->data, orig->capacity);
-   clone->len= orig->len;
-   return 0;
-}
-#endif
-
-/* Aliases for typemap */
-typedef secret_buffer  *auto_secret_buffer;
-typedef secret_buffer  *maybe_secret_buffer;
-
 /* flag for capacity */
 #define SECRET_BUFFER_AT_LEAST 1
-
-#include "secret_buffer_console.c"
-#include "secret_buffer_async_write.c"
-#include "secret_buffer_charset.c"
-#include "secret_buffer_scan.c"
 
 /* Convenience to convert string parameters to the corresponding integer so that Perl-side
  * doesn't always need to import the flag constants.
@@ -1036,6 +1069,114 @@ wait(result, timeout=-1)
          XSRETURN(2);
       } else {
          XSRETURN(0);
+      }
+
+MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::Span
+
+UV
+pos(span, newval_sv= NULL)
+   secret_buffer_span *span
+   SV *newval_sv
+   ALIAS:
+      lim = 1
+      len = 2
+   CODE:
+      if (newval_sv) {
+         IV newval= SvIV(newval_sv);
+         if (newval < 0)
+            croak("pos, lim, and len can not be negative");
+         switch (ix) {
+         case 0: span->pos= newval; break;
+         case 1: if (newval < span->pos) croak("lim must be >= pos");
+                 span->lim= newval; break;
+         case 2: span->pos + newval;
+         default: croak("BUG");
+         }
+      }
+      RETVAL= ix == 0? span->pos
+            : ix == 1? span->lim
+            : ix == 2? span->lim - span->pos
+            : -1;
+   OUTPUT:
+      RETVAL
+
+void
+scan(self, pattern, flags= 0)
+   SV *self
+   SV *pattern
+   IV flags
+   ALIAS:
+      parse       = 0x102
+      rparse      = 0x203
+      trim        = 0x322
+      ltrim       = 0x422
+      rtrim       = 0x523
+      starts_with = 0x612
+      ends_with   = 0x713
+   INIT:
+      secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
+      secret_buffer_parse parse_state;
+      Zero(&parse_state, 1, secret_buffer_parse);
+      parse_state.pos= span->pos;
+      parse_state.lim= span->lim;
+      parse_state.encoding= span->encoding;
+      SV **sb_sv= hv_fetchs((HV*)SvRV(self), "buf", 0);
+      if (!sb_sv || !*sb_sv || !SvOK(*sb_sv))
+         croak("Missing ->{buf}");
+      secret_buffer *buf= secret_buffer_from_magic(*sb_sv, SECRET_BUFFER_MAGIC_OR_DIE);
+      // Bit 0 indicates an op from the end of the buffer
+      if (ix & 1)
+         flags |= SECRET_BUFFER_SCAN_REVERSE;
+      // Bit 1 indicates an anchored op
+      if (ix & 2)
+         flags |= SECRET_BUFFER_SCAN_ANCHORED;
+      // Bits 4..7 indicate return type,
+      //   0 == return a span
+      //   1 == return bool
+      //   2 == return self
+      int ret_type= (ix >> 4) & 0xF;
+      int op= (ix >> 8);
+      bool matched;
+   PPCODE:
+      matched= secret_buffer_scan(buf, pattern, &parse_state, flags);
+      if (parse_state.error)
+         croak("%s", parse_state.error);
+      switch (op) {
+      case 1: // parse
+         if (matched) span->pos= parse_state.lim;
+         break;
+      case 2: // rparse
+         if (matched) span->lim= parse_state.pos;
+         break;
+      case 3: // trim
+      case 4: // ltrim
+         if (matched) span->pos= parse_state.lim;
+         if (op == 4) break;
+         // reset the modified parse_state and run in reverse
+         parse_state.pos= span->pos;
+         parse_state.lim= span->lim;
+         flags |= SECRET_BUFFER_SCAN_REVERSE;
+         matched= secret_buffer_scan(buf, pattern, &parse_state, flags);
+      case 5: // rtrim, and trim
+         if (matched) span->lim= parse_state.pos;
+         break;
+      default:
+      }
+      if (ret_type == 0) {
+         if (!matched)
+            XSRETURN_UNDEF;
+         if (parse_state.pos > parse_state.lim || parse_state.lim > buf->len)
+            croak("BUG: parse_state pos=%ld lim=%ld buf.len=%ld",
+               (long)parse_state.pos, (long)parse_state.lim, (long)buf->len);
+         PUSHs(new_span_obj(buf, parse_state.pos, parse_state.lim, span->encoding));
+      } else if (ret_type == 1) {
+         if (matched)
+            XSRETURN_YES;
+         else
+            XSRETURN_NO;
+      }
+      else {
+         XSRETURN(1); // use self pointer in ST(0)
       }
 
 BOOT:

@@ -73,9 +73,10 @@ typedef struct {
  * Note that every codepoint higher than 255 compared to a charset with the
  * maybe_unicode flag will call out to the perl regex engine and be a bit slow.
  */
-#define SECRET_BUFFER_SCAN_REVERSE 0x10
-#define SECRET_BUFFER_SCAN_NEGATE  0x20
-#define SECRET_BUFFER_SCAN_SPAN    0x40
+#define SECRET_BUFFER_SCAN_REVERSE  0x10
+#define SECRET_BUFFER_SCAN_NEGATE   0x20
+#define SECRET_BUFFER_SCAN_SPAN     0x40
+#define SECRET_BUFFER_SCAN_ANCHORED 0x80
 extern bool secret_buffer_scan(secret_buffer *sb, SV *pattern,
                                secret_buffer_parse *parse_state, int flags);
 extern bool secret_buffer_scan_charset(secret_buffer *sb, secret_buffer_charset *cset,

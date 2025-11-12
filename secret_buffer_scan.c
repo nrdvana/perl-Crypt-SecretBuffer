@@ -82,6 +82,7 @@ static bool parse_scan_charset_bytes(
    bool negate=  (flags & SECRET_BUFFER_SCAN_NEGATE);
    bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
    bool span=    (flags & SECRET_BUFFER_SCAN_SPAN) || cset->match_span;
+   bool anchored=(flags & SECRET_BUFFER_SCAN_ANCHORED);
    int step= reverse? -1 : 1;
    const U8 *pos= reverse? data + parse_state->lim-1 : data + parse_state->pos,
             *lim= reverse? data + parse_state->pos-1 : data + parse_state->lim,
@@ -103,7 +104,8 @@ static bool parse_scan_charset_bytes(
          }
          span_start= pos;
          negate= !negate;
-      }
+      } else if (anchored && !span_start)
+         break;
       pos += step;
    }
    // reached end of defined range, and implicitly ends span
@@ -128,6 +130,7 @@ static bool parse_scan_charset_codepoints(
    bool negate=  (flags & SECRET_BUFFER_SCAN_NEGATE);
    bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
    bool span=    (flags & SECRET_BUFFER_SCAN_SPAN) || cset->match_span;
+   bool anchored=(flags & SECRET_BUFFER_SCAN_ANCHORED);
    bool span_started= false;
    size_t span_mark= 0, prev_mark= reverse? parse_state->lim : parse_state->pos;
 
@@ -154,7 +157,8 @@ static bool parse_scan_charset_codepoints(
          span_started= true;
          span_mark= prev_mark;
          negate= !negate;
-      }
+      } else if (anchored && !span_started)
+         break;
       prev_mark= reverse? parse_state->lim : parse_state->pos;
    }
    // reached end of defined range
@@ -326,6 +330,7 @@ bool parse_scan_bytestr(secret_buffer_parse *parse_state, const U8 *data,
 ) {
    bool reverse= (flags & SECRET_BUFFER_SCAN_REVERSE);
    bool span=    (flags & SECRET_BUFFER_SCAN_SPAN);
+   bool anchored=(flags & SECRET_BUFFER_SCAN_ANCHORED);
    parse_state->error = NULL;
    if (parse_state->pos >= parse_state->lim) // empty range
       return false;
@@ -341,11 +346,12 @@ bool parse_scan_bytestr(secret_buffer_parse *parse_state, const U8 *data,
 
    // Consider a reduced range where the length of the string is removed from
    // the buffer limit, resulting in a pointer to the last char ('pmax') which
-   // possibly match 'bytestr'.
+   // could possibly match 'bytestr'.
    const U8 first_ch= *bytestr,
            *pmin= data + parse_state->pos,
            *pmax= data + parse_state->lim - bytestr_len;
    if (reverse) {
+      if (anchored) pmin= pmax;
       while (pmin <= pmax) {
          if (*pmax == first_ch && 0 == memcmp(pmax, bytestr, bytestr_len)) {
             parse_state->pos= pmax - data;
@@ -361,6 +367,7 @@ bool parse_scan_bytestr(secret_buffer_parse *parse_state, const U8 *data,
          --pmax;
       }
    } else {
+      if (anchored) pmax= pmin;
       while (pmin <= pmax) {
          if (*pmin == first_ch && 0 == memcmp(pmin, bytestr, bytestr_len)) {
             parse_state->pos= pmin - data;
