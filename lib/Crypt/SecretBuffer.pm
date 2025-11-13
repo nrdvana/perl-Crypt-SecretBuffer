@@ -426,6 +426,14 @@ This is exactly like Perl's C<substr> function, but it returns
 C<Crypt::SecretBuffer> objects, and they are not an lvalue that alters the
 original.  The offset and length are always bytes.
 
+=method span
+
+  $span= $buf->span($pos= 0, $len= $buf->len, $encoding=undef);
+  $span= $buf->span(pos => $p0, lim => $p1, encoding => UTF8);
+
+Like substr, but returns a L<Crypt::SecretBuffer::Span> which holds a reference back to the
+original SecretBuffer.  The Span object has various methods convenient for parsing.
+
 =method append_random
 
   $byte_count= $buf->append_random($n_bytes);

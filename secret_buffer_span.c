@@ -43,13 +43,13 @@ int secret_buffer_span_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
 }
 #endif
 
-static SV *new_span_obj(pTHX_ secret_buffer *buf, UV pos, UV lim, int encoding) {
+static SV *new_mortal_span_obj(pTHX_ secret_buffer *buf, UV pos, UV lim, int encoding) {
    HV *hv= newHV();
    SV *ref= sv_2mortal(newRV_noinc((SV*) hv));
-   secret_buffer_span *span= secret_buffer_span_from_magic(ref, SECRET_BUFFER_MAGIC_AUTOCREATE);
-
-   hv_stores(hv, "buf", newRV_inc(buf->wrapper));
    sv_bless(ref, gv_stashpv("Crypt::SecretBuffer::Span", GV_ADD));
+
+   secret_buffer_span *span= secret_buffer_span_from_magic(ref, SECRET_BUFFER_MAGIC_AUTOCREATE);
+   hv_stores(hv, "buf", newRV_inc(buf->wrapper));
    span->pos= pos;
    span->lim= lim;
    span->encoding= encoding;

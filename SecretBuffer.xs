@@ -1073,6 +1073,85 @@ wait(result, timeout=-1)
 
 MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::Span
 
+void
+span(class_or_obj, ...)
+   SV *class_or_obj
+   ALIAS:
+      new = 1
+      Crypt::SecretBuffer::span = 2
+   INIT:
+      secret_buffer_span *span= secret_buffer_span_from_magic(class_or_obj, SECRET_BUFFER_MAGIC_UNDEF_OK);
+      SV **buf_field= span && SvTYPE(SvRV(class_or_obj)) == SVt_PVHV
+         ? hv_fetchs((HV*)SvRV(class_or_obj), "buf", 0)
+         : NULL;
+      secret_buffer *buf= secret_buffer_from_magic(
+         buf_field? *buf_field : class_or_obj, SECRET_BUFFER_MAGIC_UNDEF_OK
+      );
+      IV base_pos= span? span->pos : 0;
+      IV pos, lim, len, base_lim;
+      int encoding= 0, i;
+      SV *encoding_sv= NULL;
+      bool have_pos= false, have_lim= false, have_len= false;
+   PPCODE:
+      //warn("items=%d  span=%p  buf=%p  base_pos=%d", (int)items, span, buf, (int)base_pos);
+      // 3-argument form, only usable when first arg is a buffer or refs a buffer
+      if (buf && items >= 2 && looks_like_number(ST(1))) {
+         pos= SvIV(ST(1));
+         have_pos= true;
+         if (items >= 3 && SvOK(ST(2))) {
+            len= SvIV(ST(2));
+            have_len= true;
+            if (items >= 4) {
+               encoding_sv= ST(3);
+               if (items > 4)
+                  warn("unexpected 4th argument after encoding");
+            }
+         }
+      } else { // key => value form
+         if ((items - 1) & 1)
+            croak("Odd number of arguments; expected (key => value, ...)");
+         for (i= 1; i < items-1; i += 2) {
+            if (0 == strcmp("pos", SvPV_nolen(ST(i)))) {
+               pos= SvIV(ST(i+1));
+               have_pos= true;
+            }
+            else if (0 == strcmp("lim", SvPV_nolen(ST(i)))) {
+               lim= SvIV(ST(i+1));
+               have_lim= true;
+            }
+            else if (0 == strcmp("len", SvPV_nolen(ST(i)))) {
+               len= SvIV(ST(i+1));
+               have_len= true;
+            }
+            else if (0 == strcmp("encoding", SvPV_nolen(ST(i)))) {
+               encoding_sv= ST(i+1);
+            }
+            else if (0 == strcmp("buf", SvPV_nolen(ST(i)))) {
+               buf= secret_buffer_from_magic(ST(i+1), SECRET_BUFFER_MAGIC_OR_DIE);
+            }
+         }
+      }
+      if (have_len && have_lim)
+         croak("Can't specify both 'len' and 'lim', make up your mind!");
+      // buffer is required
+      if (!buf)
+         croak("Require 'buf' attribute");
+      base_lim= span? span->lim : buf->len;
+      // pos is relative to base_pos, and needs truncated to (or count backward from) base_lim
+      pos= have_pos? normalize_offset(pos, base_lim-base_pos)+base_pos
+                   : base_pos;
+      // likewise for lim, but also might need calculated from 'len'
+      lim= have_lim? normalize_offset(lim, base_lim-base_pos)+base_pos
+         : have_len? normalize_offset(pos+len, base_lim)
+                   : base_lim;
+      //warn("  base_lim=%d pos=%d  lim=%d", (int) base_lim, (int)pos, (int)lim);
+      // check encoding
+      if (encoding_sv) {
+         if (!parse_encoding(encoding_sv, &encoding))
+            croak("Unknown encoding '%s'", SvPV_nolen(encoding_sv));
+      }
+      PUSHs(new_mortal_span_obj(buf, pos, lim, encoding));
+
 UV
 pos(span, newval_sv= NULL)
    secret_buffer_span *span
@@ -1168,7 +1247,7 @@ scan(self, pattern, flags= 0)
          if (parse_state.pos > parse_state.lim || parse_state.lim > buf->len)
             croak("BUG: parse_state pos=%ld lim=%ld buf.len=%ld",
                (long)parse_state.pos, (long)parse_state.lim, (long)buf->len);
-         PUSHs(new_span_obj(buf, parse_state.pos, parse_state.lim, span->encoding));
+         PUSHs(new_mortal_span_obj(buf, parse_state.pos, parse_state.lim, span->encoding));
       } else if (ret_type == 1) {
          if (matched)
             XSRETURN_YES;
