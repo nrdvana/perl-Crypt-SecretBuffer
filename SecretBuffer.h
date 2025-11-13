@@ -44,6 +44,8 @@ extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cs
 #define SECRET_BUFFER_ENCODING_UTF8     1
 #define SECRET_BUFFER_ENCODING_UTF16LE  2
 #define SECRET_BUFFER_ENCODING_UTF16BE  3
+#define SECRET_BUFFER_ENCODING_HEX      4
+#define SECRET_BUFFER_ENCODING_MAX      4
 
 typedef struct {
    size_t pos, lim;

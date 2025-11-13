@@ -10,6 +10,30 @@ static bool parse_scan_charset_bytes(secret_buffer_parse *parse_state, const U8 
 static bool parse_scan_charset_codepoints(secret_buffer_parse *parse_state, const U8 *data, const secret_buffer_charset *cset, int flags);
 static bool parse_scan_bytestr(secret_buffer_parse *parse_state, const U8 *data, const U8 *bytestr, size_t bytestr_len, int flags);
 
+static bool parse_encoding(SV *sv, int *out) {
+   int enc;
+   if (looks_like_number(sv)) {
+      IV i= SvIV(sv);
+      if (i < 0 || i > SECRET_BUFFER_ENCODING_MAX)
+         return false;
+      enc= (int) i;
+   } else {
+      STRLEN len;
+      const char *str= SvPV(sv, len);
+      switch (len) {
+      case 3: if (0 == strcmp(str, "HEX"))     enc= SECRET_BUFFER_ENCODING_HEX;     break;
+      case 4: if (0 == strcmp(str, "UTF8"))    enc= SECRET_BUFFER_ENCODING_UTF8;    break;
+      case 5: if (0 == strcmp(str, "ASCII"))   enc= SECRET_BUFFER_ENCODING_ASCII;   break;
+      case 7: if (0 == strcmp(str, "UTF16LE")) enc= SECRET_BUFFER_ENCODING_UTF16LE;
+              if (0 == strcmp(str, "UTF16BE")) enc= SECRET_BUFFER_ENCODING_UTF16BE; break;
+      default:
+         return false;
+      }
+   }
+   if (out) *out= enc;
+   return true;
+}
+
 /* Public API: Scan for a pattern which may be a regex or literal string.
  * Regexes are currently limited to a single charclass.
  */
@@ -256,6 +280,27 @@ static int parse_next_codepoint(secret_buffer_parse *parse_state, const U8 *data
          cp = 0x10000 + (((cp & 0x3FF) << 10) | (w2 & 0x3FF));
       }
    }
+   else if (parse_state->encoding == SECRET_BUFFER_ENCODING_HEX) {
+      // Skip over whitespace
+      while (pos < lim && isspace(*pos))
+         pos++;
+      if (lim - pos < 2) {
+         parse_state->error= 'not enough hex chars in range';
+         return -1;
+      }
+      int high= pos[0] - '0';
+      int low= pos[1] - '0';
+      if (low >= ('a'-'0')) low -= ('a'-'0'-10);
+      else if (low >= ('A'-'0')) low -= ('A'-'0'-10);
+      if (high >= ('a'-'0')) high -= ('a'-'0'-10);
+      else if (high >= ('A'-'0')) high -= ('A'-'0'-10);
+      if ((low >> 4) | (high >> 4)) {
+         parse_state->error= "not a pair of hex digits";
+         return -1;
+      }
+      pos += 2;
+      return (high << 4) | low;
+   }
    else {
       parse_state->error= "unknown encoding";
       return -1;
@@ -317,6 +362,27 @@ static int parse_prev_codepoint(secret_buffer_parse *parse_state, const U8 *data
       if (cp >= 0)
          parse_state->lim -= 4;
       parse_state->pos= pos - data; // restore original pos
+   }
+   else if (parse_state->encoding == SECRET_BUFFER_ENCODING_HEX) {
+      // Skip over whitespace
+      while (pos < lim && isspace(lim[1]))
+         lim--;
+      if (lim - pos < 2) {
+         parse_state->error= 'not enough hex chars in range';
+         return -1;
+      }
+      int high= lim[-2] - '0';
+      int low= lim[-1] - '0';
+      if (low >= ('a'-'0')) low -= ('a'-'0'-10);
+      else if (low >= ('A'-'0')) low -= ('A'-'0'-10);
+      if (high >= ('a'-'0')) high -= ('a'-'0'-10);
+      else if (high >= ('A'-'0')) high -= ('A'-'0'-10);
+      if ((low >> 4) | (high >> 4)) {
+         parse_state->error= "not a pair of hex digits";
+         return -1;
+      }
+      lim -= 2;
+      return (high << 4) | low;
    }
    else {
       parse_state->error= "unknown encoding";
