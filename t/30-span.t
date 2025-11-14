@@ -40,4 +40,32 @@ subtest ends_with => sub {
    ok( !$s->ends_with(qr/[0-9]/), 'doesnt end with digit' );
 };
 
+subtest copy_bytes => sub {
+   my $s= secret("abcdef")->span;
+   is $s->copy,
+      object {
+         call stringify => '[REDACTED]';
+         call length => 6;
+         call sub { shift->span->starts_with("abcdef") } => T;
+      },
+      'copy';
+   my $str;
+   $s->copy_to($str);
+   is( $str, "abcdef", "copy to scalar" );
+   my $buf= secret("");
+   $s->copy_to($buf);
+   is $buf,
+      object {
+         call stringify => '[REDACTED]';
+         call length => 6;
+         call sub { shift->span->starts_with("abcdef") } => T;
+      },
+      'copy to secret';
+
+   # Try to specify something out of bounds
+   $s->buf->length(4);
+   is( $s->length, 6, 'span is 6 bytes' );
+   is( $s->copy->length, 4, 'copy truncated to 4 bytes' );
+};
+
 done_testing;

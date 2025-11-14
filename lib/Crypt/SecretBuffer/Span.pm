@@ -39,6 +39,11 @@ of SecretBuffer).
 
 The C<SecretBuffer> this span refers to.  Spans hold a strong reference to the buffer.
 
+=cut
+
+sub buf { $_[0]{buf} }
+*buffer= *buf;
+
 =attribute pos
 
 The parse position.  This is a byte offset within the SecretBuffer, even when using a multibyte
@@ -126,25 +131,16 @@ Return a boolean of whether $pattern matches at the end of the string.
 Look for the first occurrence of a pattern in this Span.  Return a new Span describing where it
 was found.  The current Span is unchanged.
 
-=method as_secret
+=method copy
 
-  $secret_buffer= $span->as_secret(%options);
+=method copy_to
 
-Return a new SecretBuffer for the currently described Span of bytes.
+  $secret= $span->copy(%options);
+  $span->copy_to($scalar_or_secret, %options);
 
-=over
-
-=item encoding => $encoding
-
-Derive character codepoints from the old buffer according to this Span's L</encoding> and
-write new characters into the new buffer according to C<$encoding>.  This is especially useful
-with the constant L</HEX> which can convert from ascii to raw bytes in the new SecretBuffer.
-
-=back
-
-=method as_nonsecret
-
-  $scalar= $span->as_nonsecret(%options);
+Copy the current span of bytes.  C<copy> returns a new SecretBuffer object.  C<copy_to> writes
+into an existing buffer, which can be either a SecretBuffer or a scalar for non-secrets.  There
+is intentionally I<not> a method to I<return> a scalar, to avoid easily leaking secrets.
 
 Options:
 
@@ -152,10 +148,15 @@ Options:
 
 =item encoding => $encoding
 
-Derive character codepoints from the old buffer according to this Span's L</encoding> and
-write new characters into the new buffer according to C<$encoding>.
+Encode bytes/characters written into the destination using the specified encoding.  The
+bytes/characters are read from the current buffer using the Span's C<encoding> attribute.  The
+default is to assume the same destination encoding as the source and copy the bytes literally,
+*unless* the destination is a Perl scalar and the source encoding was a type of unicode, in which
+case the default is to copy as Perl "wide characters" (which is internally UTF-8).  But, if you
+specify UTF-8 here, you will instead receive bytes of a UTF-8 rather than perl wide characters.
 
 =back
 
 =cut
 
+1;

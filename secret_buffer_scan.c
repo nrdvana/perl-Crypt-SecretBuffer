@@ -285,7 +285,7 @@ static int parse_next_codepoint(secret_buffer_parse *parse_state, const U8 *data
       while (pos < lim && isspace(*pos))
          pos++;
       if (lim - pos < 2) {
-         parse_state->error= 'not enough hex chars in range';
+         parse_state->error= "not enough hex chars in range";
          return -1;
       }
       int high= pos[0] - '0';
@@ -368,7 +368,7 @@ static int parse_prev_codepoint(secret_buffer_parse *parse_state, const U8 *data
       while (pos < lim && isspace(lim[1]))
          lim--;
       if (lim - pos < 2) {
-         parse_state->error= 'not enough hex chars in range';
+         parse_state->error= "not enough hex chars in range";
          return -1;
       }
       int high= lim[-2] - '0';
@@ -389,6 +389,100 @@ static int parse_prev_codepoint(secret_buffer_parse *parse_state, const U8 *data
       return -1;
    }
    return cp;
+}
+
+static int sizeof_codepoint_encoding(int codepoint, int encoding) {
+   if (encoding == SECRET_BUFFER_ENCODING_ASCII)
+      return codepoint < 0x100? 1 : -1;
+   else if (encoding == SECRET_BUFFER_ENCODING_UTF8)
+      return codepoint < 0x80? 1 : codepoint < 0x800? 2 : codepoint < 0x10000? 3 : 4;
+   else if (encoding == SECRET_BUFFER_ENCODING_UTF16LE
+         || encoding == SECRET_BUFFER_ENCODING_UTF16BE)
+      return codepoint >= 0xD800 && codepoint < 0xE000? -1
+           : codepoint < 0x10000? 2 : 4;
+   else if (encoding == SECRET_BUFFER_ENCODING_HEX)
+      return codepoint < 0x100? 2 : -1;
+   else
+      return -1;
+}
+
+static int encode_codepoint(U8 *dest, U8 *lim, int codepoint, int encoding) {
+   if (encoding == SECRET_BUFFER_ENCODING_ASCII) {
+      if (dest < lim) { dest[0] = (U8) codepoint; return 1; }
+   }
+   else if (encoding == SECRET_BUFFER_ENCODING_UTF8) {
+      int n= codepoint < 0x80? 1 : codepoint < 0x800? 2 : codepoint < 0x10000? 3 : 4;
+      if (lim - dest >= n) {
+         switch (n) {
+         case 1: dest[0] = (U8) codepoint;
+                 return 1;
+         case 2: dest[0] = (U8)(0xC0 | (codepoint >> 6));
+                 dest[1] = (U8)(0x80 | (codepoint & 0x3F));
+                 return 2;
+         case 3: dest[0] = (U8)(0xE0 | (codepoint >> 12));
+                 dest[1] = (U8)(0x80 | ((codepoint >> 6) & 0x3F));
+                 dest[2] = (U8)(0x80 | (codepoint & 0x3F));
+                 return 3;
+         case 4: dest[0] = (U8)(0xF0 | (codepoint >> 18));
+                 dest[1] = (U8)(0x80 | ((codepoint >> 12) & 0x3F));
+                 dest[2] = (U8)(0x80 | ((codepoint >> 6) & 0x3F));
+                 dest[3] = (U8)(0x80 | (codepoint & 0x3F));
+                 return 4;
+         default:
+         }
+      }
+   }
+   else if (encoding == SECRET_BUFFER_ENCODING_UTF16LE) {
+      if (codepoint < 0x10000) {
+         if (dest + 1 < lim) {
+            dest[0] = (U8)(codepoint & 0xFF);
+            dest[1] = (U8)(codepoint >> 8);
+            return 2;
+         }
+      }
+      else if (codepoint < 0x110000) {
+         if (dest + 3 < lim) {
+            int adjusted = codepoint - 0x10000;
+            int high = 0xD800 + (adjusted >> 10);
+            int low = 0xDC00 + (adjusted & 0x3FF);
+            dest[0] = (U8)(high & 0xFF);
+            dest[1] = (U8)(high >> 8);
+            dest[2] = (U8)(low & 0xFF);
+            dest[3] = (U8)(low >> 8);
+            return 4;
+         }
+      }
+   }
+   else if (encoding == SECRET_BUFFER_ENCODING_UTF16BE) {
+      if (codepoint < 0x10000) {
+         if (dest + 1 < lim) {
+            dest[0] = (U8)(codepoint >> 8);
+            dest[1] = (U8)(codepoint & 0xFF);
+            return 2;
+         }
+      }
+      else if (codepoint < 0x110000) {
+         if (dest + 3 < lim) {
+            int adjusted = codepoint - 0x10000;
+            int high = 0xD800 + (adjusted >> 10);
+            int low = 0xDC00 + (adjusted & 0x3FF);
+            dest[0] = (U8)(high >> 8);
+            dest[1] = (U8)(high & 0xFF);
+            dest[2] = (U8)(low >> 8);
+            dest[3] = (U8)(low & 0xFF);
+            return 4;
+         }
+      }
+   }
+   else if (encoding == SECRET_BUFFER_ENCODING_HEX) {
+      if (codepoint < 0x100 && dest + 1 < lim) {
+         const char hex[] = "0123456789abcdef";
+         dest[0] = hex[(codepoint >> 4) & 0xF];
+         dest[1] = hex[codepoint & 0xF];
+         return 2;
+      }
+   }
+   return -1;
 }
 
 bool parse_scan_bytestr(secret_buffer_parse *parse_state, const U8 *data,

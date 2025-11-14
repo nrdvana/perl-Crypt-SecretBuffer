@@ -644,4 +644,5 @@ instructions how to report security vulnerabilities.
 
 =cut
 
+require Crypt::SecretBuffer::Span;
 1;

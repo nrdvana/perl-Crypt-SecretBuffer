@@ -1159,6 +1159,7 @@ pos(span, newval_sv= NULL)
    ALIAS:
       lim = 1
       len = 2
+      length = 2
    CODE:
       if (newval_sv) {
          IV newval= SvIV(newval_sv);
@@ -1194,15 +1195,13 @@ scan(self, pattern, flags= 0)
       ends_with   = 0x713
    INIT:
       secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
+      SV **sb_sv= hv_fetchs((HV*)SvRV(self), "buf", 1);
+      secret_buffer *buf= secret_buffer_from_magic(*sb_sv, SECRET_BUFFER_MAGIC_OR_DIE);
       secret_buffer_parse parse_state;
       Zero(&parse_state, 1, secret_buffer_parse);
       parse_state.pos= span->pos;
       parse_state.lim= span->lim;
       parse_state.encoding= span->encoding;
-      SV **sb_sv= hv_fetchs((HV*)SvRV(self), "buf", 0);
-      if (!sb_sv || !*sb_sv || !SvOK(*sb_sv))
-         croak("Missing ->{buf}");
-      secret_buffer *buf= secret_buffer_from_magic(*sb_sv, SECRET_BUFFER_MAGIC_OR_DIE);
       // Bit 0 indicates an op from the end of the buffer
       if (ix & 1)
          flags |= SECRET_BUFFER_SCAN_REVERSE;
@@ -1257,6 +1256,110 @@ scan(self, pattern, flags= 0)
       else {
          XSRETURN(1); // use self pointer in ST(0)
       }
+
+void
+copy_to(self, ...)
+   SV *self
+   ALIAS:
+      copy = 1
+   INIT:
+      secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
+      SV **sb_sv= hv_fetchs((HV*)SvRV(self), "buf", 1);
+      secret_buffer *buf= secret_buffer_from_magic(*sb_sv, SECRET_BUFFER_MAGIC_OR_DIE);
+      secret_buffer *dst_buf= NULL;
+      SV *dst_sv= NULL;
+      int next_arg, dst_encoding_req= -1, dst_encoding= -1;
+      char *dst_p, *dst_lim;
+   PPCODE:
+      if (ix == 0) {
+         if (items >= 2) {
+            if (sv_isobject(ST(1))) // if object, must be a SecretBuffer
+               dst_buf= secret_buffer_from_magic(ST(1), SECRET_BUFFER_MAGIC_OR_DIE);
+            else if (SvROK(ST(1)) && !SvROK(SvRV(ST(1)))) // Scalar-ref
+               dst_sv= SvRV(ST(1));
+            else if (!SvROK(ST(1))) // any plain non-ref scalar
+               dst_sv= ST(1);
+         }
+         if (!dst_sv && !dst_buf)
+            croak("copy_to destination buffer must be an empty scalar, scalar-ref, or a SecretBuffer instance");
+         next_arg= 2;
+      }
+      else {
+         next_arg= 1;
+      }
+      
+      // parse options
+      if ((items - next_arg) & 1)
+         croak("expected even-length list of (key => val)");
+      for (; next_arg < items; next_arg+= 2) {
+         if (0 == strcmp(SvPV_nolen(ST(next_arg)), "encoding")) {
+            if (!parse_encoding(ST(next_arg+1), &dst_encoding_req))
+               croak("Unknown encoding");
+         }
+      }
+      // Verify the span against the buffer.  Truncating the ->lim is OK, but
+      // if ->pos it out of bounds, throw an exception.
+      if (span->lim > buf->len) {
+         span->lim= buf->len;
+         if (span->pos > buf->len)
+            croak("Span beyond length of buffer");
+      }
+      // Determine the actual destination encoding
+      if (dst_encoding_req >= 0)
+         dst_encoding= dst_encoding_req;
+      // if dest is an SV and src is a type of unicode, an destination encoding was not specified,
+      // export as utf-8 for perl wide chars.  Also follow this code path for destination utf-8.
+      else if (dst_sv && SECRET_BUFFER_ENCODING_IS_UNICODE(span->encoding))
+         dst_encoding= SECRET_BUFFER_ENCODING_UTF8;
+      else
+         dst_encoding= span->encoding;
+      // Even when copying to a SV, write the buf first and then "sv_setpvn_mg"
+      // in order to deal with magic conveniently.
+      if (!dst_buf)
+         dst_buf= secret_buffer_new(0, NULL);
+      // If the source and destination encodings are both bytes, use memcpy
+      if (dst_encoding == 0 && span->encoding == 0) {
+         size_t cnt= span->lim - span->pos;
+         secret_buffer_set_len(dst_buf, cnt);
+         memcpy(dst_buf->data, buf->data + span->pos, cnt);
+      }
+      // Else need to iterate characters (to validate) and re-encode them
+      else {
+         secret_buffer_parse ps;
+         size_t dst_size_needed= 0;
+         ps.pos= span->pos;
+         ps.lim= span->lim;
+         ps.encoding= span->encoding;
+         ps.error= NULL;
+         // First count the number of bytes that will be required in the destination
+         // encoding, while also checking that the source encoding is valid.
+         while (ps.pos < ps.lim) {
+            int cp= parse_next_codepoint(&ps, buf->data);
+            if (cp < 0)
+               croak("%s", ps.error);
+            dst_size_needed += sizeof_codepoint_encoding(cp, dst_encoding);
+         }
+         // resize buffer, and then transcode
+         secret_buffer_set_len(dst_buf, dst_size_needed);
+         dst_buf->len= dst_size_needed;
+         ps.pos= span->pos; // reset iteration
+         U8 *dst_pos= dst_buf->data, *dst_lim= dst_buf->data + dst_buf->len;
+         while (ps.pos < ps.lim) {
+            int cp= parse_next_codepoint(&ps, buf->data);
+            int len= encode_codepoint(dst_pos, dst_lim, cp, dst_encoding);
+            if (len < 0)
+               croak("Failed to encode codepoint %d", (int)cp);
+            dst_pos += len;
+         }
+         if (dst_pos != dst_lim)
+            croak("BUG");
+      }
+      // If the output was actually a SV, assign that now
+      if (dst_sv)
+         sv_setpvn_mg(dst_sv, dst_buf->data, dst_buf->len);
+      // copy returns the SecretBuffer, but copy_to returns empty list.
+      if (ix == 1)
+         PUSHs(sv_2mortal(newRV_inc(dst_buf->wrapper)));
 
 BOOT:
    HV *stash= gv_stashpvs("Crypt::SecretBuffer", 1);
