@@ -499,7 +499,7 @@ IV secret_buffer_append_read(secret_buffer *buf, PerlIO *stream, size_t count) {
 #include "secret_buffer_console.c"
 #include "secret_buffer_async_write.c"
 #include "secret_buffer_charset.c"
-#include "secret_buffer_scan.c"
+#include "secret_buffer_parse.c"
 #include "secret_buffer_span.c"
 
 /**********************************************************************************************\
@@ -770,30 +770,32 @@ index(buf, pattern, ofs_sv= &PL_sv_undef)
       rindex = 1
    INIT:
       secret_buffer_parse parse;
+      size_t pos= 0, lim;
       int flags= 0;
-      Zero(&parse, 1, parse);
       if (ix == 0) { // index (forward)
-         parse.pos= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : 0, buf->len);
-         parse.lim= buf->len;
+         pos= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : 0, buf->len);
+         lim= buf->len;
       } else { // rindex (reverse)
          IV max= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : -1, buf->len);
-         flags= SECRET_BUFFER_SCAN_REVERSE;
+         flags= SECRET_BUFFER_MATCH_REVERSE;
          // The ofs specifies the *start* of the match, not the maximum byte pos
          // that could be part of the match.  If pattern is a charset, add one to get 'lim',
          // and if pattern is a string, add string byte length to get 'lim'.
          if (SvRX(pattern))
-            parse.lim= max + 1;
+            lim= max + 1;
          else {
             STRLEN len; // needs to be byte count, so can't SvCUR without converting to bytes first
             const char *str= SvPVbyte(pattern, len);
-            parse.lim= max + len;
+            lim= max + len;
          }
          // re-clamp lim to end of buffer
-         if (parse.lim > buf->len) parse.lim= buf->len;
+         if (lim > buf->len) lim= buf->len;
       }
+      if (!secret_buffer_parse_init(&parse, buf, pos, lim, 0))
+         croak("%s", parse.error);
    CODE:
-      if (secret_buffer_scan(buf, pattern, &parse, flags))
-         RETVAL= parse.pos;
+      if (secret_buffer_match(&parse, pattern, flags))
+         RETVAL= parse.pos - (U8*) buf->data;
       else {
          if (parse.error)
             croak("%s", parse.error);
@@ -811,20 +813,20 @@ scan(buf, pattern, flags= 0, ofs= 0, len_sv= &PL_sv_undef)
    SV *len_sv
    INIT:
       secret_buffer_parse parse;
-      bool reverse= flags & SECRET_BUFFER_SCAN_REVERSE;
-      bool find_span= flags & SECRET_BUFFER_SCAN_SPAN;
-      IV len= !SvOK(len_sv)? buf->len : SvIV(len_sv);
       // lim was captured as an SV so that undef can be used to indicate
       // end of the buffer.
-      Zero(&parse, 1, parse);
-      parse.pos= normalize_offset(ofs, buf->len);
-      parse.lim= parse.pos + normalize_offset(len, buf->len - parse.pos);
-      parse.encoding= (flags & SECRET_BUFFER_ENCODING_MASK);
-   PPCODE:
-      secret_buffer_scan(buf, pattern, &parse, flags);
-      if (parse.error)
+      IV len= !SvOK(len_sv)? buf->len : SvIV(len_sv);
+      ofs= normalize_offset(ofs, buf->len);
+      if (!secret_buffer_parse_init(&parse, buf,
+         ofs, ofs + normalize_offset(len, buf->len - ofs),
+         (flags & SECRET_BUFFER_ENCODING_MASK)
+      ))
          croak("%s", parse.error);
-      PUSHs(sv_2mortal(newSViv(parse.pos)));
+   PPCODE:
+      if (!secret_buffer_match(&parse, pattern, flags))
+         if (parse.error)
+            croak("%s", parse.error);
+      PUSHs(sv_2mortal(newSViv(parse.pos - (U8*) buf->data)));
       PUSHs(sv_2mortal(newSViv(parse.lim - parse.pos)));
 
 void
@@ -866,9 +868,9 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
          STRLEN repl_len;
 
          /* Debatable whether I should allow plain SVs here, or force the user to wrap the data
-          * in a secreyt_buffer first... */
+          * in a secret_buffer first... */
          if (SvPOK(replacement)) {
-            repl_src= (const unsigned char*) SvPV(replacement, repl_len);
+            repl_src= (const unsigned char*) SvPVbyte(replacement, repl_len);
          } else {
             secret_buffer *peer= secret_buffer_from_magic(replacement, SECRET_BUFFER_MAGIC_OR_DIE);
             repl_src= (const unsigned char*) peer->data;
@@ -1089,7 +1091,7 @@ span(class_or_obj, ...)
       );
       IV base_pos= span? span->pos : 0;
       IV pos, lim, len, base_lim;
-      int encoding= 0, i;
+      int encoding= span? span->encoding : 0, i;
       SV *encoding_sv= NULL;
       bool have_pos= false, have_lim= false, have_len= false;
    PPCODE:
@@ -1131,7 +1133,7 @@ span(class_or_obj, ...)
             }
          }
       }
-      if (have_len && have_lim)
+      if (have_len && have_lim && (lim != pos + len))
          croak("Can't specify both 'len' and 'lim', make up your mind!");
       // buffer is required
       if (!buf)
@@ -1142,8 +1144,10 @@ span(class_or_obj, ...)
                    : base_pos;
       // likewise for lim, but also might need calculated from 'len'
       lim= have_lim? normalize_offset(lim, base_lim-base_pos)+base_pos
-         : have_len? normalize_offset(pos+len, base_lim)
+         : have_len? normalize_offset(len, base_lim-pos)+pos
                    : base_lim;
+      if (pos > lim)
+         croak("lim must be greater or equal to pos");
       //warn("  base_lim=%d pos=%d  lim=%d", (int) base_lim, (int)pos, (int)lim);
       // check encoding
       if (encoding_sv) {
@@ -1181,7 +1185,24 @@ pos(span, newval_sv= NULL)
       RETVAL
 
 void
-scan(self, pattern, flags= 0)
+encoding(span, newval_sv= NULL)
+   secret_buffer_span *span
+   SV *newval_sv
+   INIT:
+      SV *enc_const;
+      AV *encodings= get_av("Crypt::SecretBuffer::_encodings", 0);
+      if (!encodings) croak("BUG");
+   PPCODE:
+      if (newval_sv)
+         if (!parse_encoding(newval_sv, &span->encoding))
+            croak("Invalid encoding");
+      enc_const= *av_fetch(encodings, span->encoding, 1);
+      if (!enc_const || !SvOK(enc_const))
+         croak("BUG");
+      PUSHs(enc_const);
+
+void
+scan(self, pattern=NULL, flags= 0)
    SV *self
    SV *pattern
    IV flags
@@ -1197,17 +1218,15 @@ scan(self, pattern, flags= 0)
       secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
       SV **sb_sv= hv_fetchs((HV*)SvRV(self), "buf", 1);
       secret_buffer *buf= secret_buffer_from_magic(*sb_sv, SECRET_BUFFER_MAGIC_OR_DIE);
-      secret_buffer_parse parse_state;
-      Zero(&parse_state, 1, secret_buffer_parse);
-      parse_state.pos= span->pos;
-      parse_state.lim= span->lim;
-      parse_state.encoding= span->encoding;
+      secret_buffer_parse parse;
+      if (!secret_buffer_parse_init(&parse, buf, span->pos, span->lim, span->encoding))
+         croak("%s", parse.error);
       // Bit 0 indicates an op from the end of the buffer
       if (ix & 1)
-         flags |= SECRET_BUFFER_SCAN_REVERSE;
+         flags |= SECRET_BUFFER_MATCH_REVERSE;
       // Bit 1 indicates an anchored op
       if (ix & 2)
-         flags |= SECRET_BUFFER_SCAN_ANCHORED;
+         flags |= SECRET_BUFFER_MATCH_ANCHORED;
       // Bits 4..7 indicate return type,
       //   0 == return a span
       //   1 == return bool
@@ -1215,38 +1234,44 @@ scan(self, pattern, flags= 0)
       int ret_type= (ix >> 4) & 0xF;
       int op= (ix >> 8);
       bool matched;
+      if (!pattern) {
+         if (op == 3 || op == 4 || op == 5)
+            pattern= get_sv("Crypt::SecretBuffer::Span::default_trim_regex", 0);
+         if (!pattern)
+            croak("pattern is required");
+      }
    PPCODE:
-      matched= secret_buffer_scan(buf, pattern, &parse_state, flags);
-      if (parse_state.error)
-         croak("%s", parse_state.error);
+      matched= secret_buffer_match(&parse, pattern, flags);
+      if (parse.error)
+         croak("%s", parse.error);
       switch (op) {
       case 1: // parse
-         if (matched) span->pos= parse_state.lim;
+         if (matched) span->pos= parse.lim - (U8*) buf->data;
          break;
       case 2: // rparse
-         if (matched) span->lim= parse_state.pos;
+         if (matched) span->lim= parse.pos - (U8*) buf->data;
          break;
       case 3: // trim
       case 4: // ltrim
-         if (matched) span->pos= parse_state.lim;
+         if (matched) span->pos= parse.lim - (U8*) buf->data;
          if (op == 4) break;
          // reset the modified parse_state and run in reverse
-         parse_state.pos= span->pos;
-         parse_state.lim= span->lim;
-         flags |= SECRET_BUFFER_SCAN_REVERSE;
-         matched= secret_buffer_scan(buf, pattern, &parse_state, flags);
+         parse.pos= buf->data + span->pos;
+         parse.lim= buf->data + span->lim;
+         flags |= SECRET_BUFFER_MATCH_REVERSE;
+         matched= secret_buffer_match(&parse, pattern, flags);
       case 5: // rtrim, and trim
-         if (matched) span->lim= parse_state.pos;
+         if (matched) span->lim= parse.pos - (U8*) buf->data;
          break;
       default:
       }
       if (ret_type == 0) {
          if (!matched)
             XSRETURN_UNDEF;
-         if (parse_state.pos > parse_state.lim || parse_state.lim > buf->len)
-            croak("BUG: parse_state pos=%ld lim=%ld buf.len=%ld",
-               (long)parse_state.pos, (long)parse_state.lim, (long)buf->len);
-         PUSHs(new_mortal_span_obj(buf, parse_state.pos, parse_state.lim, span->encoding));
+         if (parse.pos > parse.lim || parse.lim > (U8*) buf->data + buf->len)
+            croak("BUG: parse pos=%p lim=%p buf.data=%p buf.len=%ld",
+               parse.pos, parse.lim, buf->data, (long)buf->len);
+         PUSHs(new_mortal_span_obj(buf, parse.pos - (U8*) buf->data, parse.lim - (U8*) buf->data, span->encoding));
       } else if (ret_type == 1) {
          if (matched)
             XSRETURN_YES;
@@ -1268,8 +1293,11 @@ copy_to(self, ...)
       secret_buffer *buf= secret_buffer_from_magic(*sb_sv, SECRET_BUFFER_MAGIC_OR_DIE);
       secret_buffer *dst_buf= NULL;
       SV *dst_sv= NULL;
+      SSize_t append_ofs, need_bytes;
       int next_arg, dst_encoding_req= -1, dst_encoding= -1;
-      char *dst_p, *dst_lim;
+      secret_buffer_parse src, dst;
+      if (!secret_buffer_parse_init(&src, buf, span->pos, span->lim, span->encoding))
+         croak("%s", src.error);
    PPCODE:
       if (ix == 0) {
          if (items >= 2) {
@@ -1297,78 +1325,64 @@ copy_to(self, ...)
                croak("Unknown encoding");
          }
       }
-      // Verify the span against the buffer.  Truncating the ->lim is OK, but
-      // if ->pos it out of bounds, throw an exception.
-      if (span->lim > buf->len) {
-         span->lim= buf->len;
-         if (span->pos > buf->len)
-            croak("Span beyond length of buffer");
-      }
-      // Determine the actual destination encoding
-      if (dst_encoding_req >= 0)
-         dst_encoding= dst_encoding_req;
-      // if dest is an SV and src is a type of unicode, an destination encoding was not specified,
-      // export as utf-8 for perl wide chars.  Also follow this code path for destination utf-8.
-      else if (dst_sv && SECRET_BUFFER_ENCODING_IS_UNICODE(span->encoding))
-         dst_encoding= SECRET_BUFFER_ENCODING_UTF8;
-      else
-         dst_encoding= span->encoding;
       // Even when copying to a SV, write the buf first and then "sv_setpvn_mg"
       // in order to deal with magic conveniently.
       if (!dst_buf)
          dst_buf= secret_buffer_new(0, NULL);
-      // If the source and destination encodings are both bytes, use memcpy
-      if (dst_encoding == 0 && span->encoding == 0) {
-         size_t cnt= span->lim - span->pos;
-         secret_buffer_set_len(dst_buf, cnt);
-         memcpy(dst_buf->data, buf->data + span->pos, cnt);
-      }
-      // Else need to iterate characters (to validate) and re-encode them
-      else {
-         secret_buffer_parse ps;
-         size_t dst_size_needed= 0;
-         ps.pos= span->pos;
-         ps.lim= span->lim;
-         ps.encoding= span->encoding;
-         ps.error= NULL;
-         // First count the number of bytes that will be required in the destination
-         // encoding, while also checking that the source encoding is valid.
-         while (ps.pos < ps.lim) {
-            int cp= parse_next_codepoint(&ps, buf->data);
-            if (cp < 0)
-               croak("%s", ps.error);
-            dst_size_needed += sizeof_codepoint_encoding(cp, dst_encoding);
-         }
-         // resize buffer, and then transcode
-         secret_buffer_set_len(dst_buf, dst_size_needed);
-         dst_buf->len= dst_size_needed;
-         ps.pos= span->pos; // reset iteration
-         U8 *dst_pos= dst_buf->data, *dst_lim= dst_buf->data + dst_buf->len;
-         while (ps.pos < ps.lim) {
-            int cp= parse_next_codepoint(&ps, buf->data);
-            int len= encode_codepoint(dst_pos, dst_lim, cp, dst_encoding);
-            if (len < 0)
-               croak("Failed to encode codepoint %d", (int)cp);
-            dst_pos += len;
-         }
-         if (dst_pos != dst_lim)
-            croak("BUG");
-      }
+      // Determine the actual destination encoding
+      if (dst_encoding_req >= 0)
+         dst_encoding= dst_encoding_req;
+      // if dest is an SV and src is a type of unicode, and destination encoding was not
+      //  specified, export as utf-8 for perl wide chars.
+      else if (dst_sv && SECRET_BUFFER_ENCODING_IS_UNICODE(span->encoding))
+         dst_encoding= SECRET_BUFFER_ENCODING_UTF8;
+      else
+         dst_encoding= span->encoding;
+
+      need_bytes= secret_buffer_sizeof_transcode(&src, dst_encoding);
+      if (need_bytes < 0)
+         croak("%s", dst.error);
+      append_ofs= dst_buf->len;
+      secret_buffer_set_len(dst_buf, dst_buf->len + need_bytes);
+      if (!secret_buffer_parse_init(&dst, dst_buf, append_ofs, append_ofs+need_bytes, dst_encoding))
+         croak("%s", dst.error);
+      if (!secret_buffer_transcode(&src, &dst))
+         croak("%s", src.error? src.error : dst.error);
       // If the output was actually a SV, assign that now
-      if (dst_sv)
+      if (dst_sv) {
          sv_setpvn_mg(dst_sv, dst_buf->data, dst_buf->len);
+         // and if no encoding was requested, upgrade to wide characters
+         if (dst_encoding == SECRET_BUFFER_ENCODING_UTF8 && dst_encoding_req < 0)
+            SvUTF8_on(dst_sv);
+         else // setpvn_mg does not change the utf8 flag, so make sure it is off
+            SvUTF8_off(dst_sv);
+      }
       // copy returns the SecretBuffer, but copy_to returns empty list.
       if (ix == 1)
          PUSHs(sv_2mortal(newRV_inc(dst_buf->wrapper)));
 
 BOOT:
    HV *stash= gv_stashpvs("Crypt::SecretBuffer", 1);
-   newCONSTSUB(stash, "NONBLOCK",  new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK,  newSVpvs_share("NONBLOCK")));
-   newCONSTSUB(stash, "AT_LEAST",  new_enum_dualvar(aTHX_ SECRET_BUFFER_AT_LEAST,  newSVpvs_share("AT_LEAST")));
-   newCONSTSUB(stash, "SCAN_SPAN", new_enum_dualvar(aTHX_ SECRET_BUFFER_SCAN_SPAN, newSVpvs_share("SCAN_SPAN")));
-   newCONSTSUB(stash, "SCAN_REVERSE",new_enum_dualvar(aTHX_ SECRET_BUFFER_SCAN_REVERSE, newSVpvs_share("SCAN_REVERSE")));
-   newCONSTSUB(stash, "SCAN_NEGATE",new_enum_dualvar(aTHX_ SECRET_BUFFER_SCAN_NEGATE,   newSVpvs_share("SCAN_NEGATE")));
-   newCONSTSUB(stash, "UTF8",    new_enum_dualvar(aTHX_ SECRET_BUFFER_ENCODING_UTF8,    newSVpvs_share("UTF8")));
-   newCONSTSUB(stash, "UTF16LE", new_enum_dualvar(aTHX_ SECRET_BUFFER_ENCODING_UTF16LE, newSVpvs_share("UTF16LE")));
-   newCONSTSUB(stash, "UTF16BE", new_enum_dualvar(aTHX_ SECRET_BUFFER_ENCODING_UTF16BE, newSVpvs_share("UTF16BE")));
+   newCONSTSUB(stash, "NONBLOCK",     new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK,      newSVpvs_share("NONBLOCK")));
+   newCONSTSUB(stash, "AT_LEAST",     new_enum_dualvar(aTHX_ SECRET_BUFFER_AT_LEAST,      newSVpvs_share("AT_LEAST")));
+   newCONSTSUB(stash, "MATCH_MULTI",  new_enum_dualvar(aTHX_ SECRET_BUFFER_MATCH_MULTI,   newSVpvs_share("MATCH_MULTI")));
+   newCONSTSUB(stash, "MATCH_REVERSE",new_enum_dualvar(aTHX_ SECRET_BUFFER_MATCH_REVERSE, newSVpvs_share("MATCH_REVERSE")));
+   newCONSTSUB(stash, "MATCH_NEGATE", new_enum_dualvar(aTHX_ SECRET_BUFFER_MATCH_NEGATE,  newSVpvs_share("MATCH_NEGATE")));
+   SV *enc[SECRET_BUFFER_ENCODING_MAX+1];
+   memset(enc, 0, sizeof(enc));
+#define ADD_ENCODING(name, const) \
+     newCONSTSUB(stash, name, (enc[const]= new_enum_dualvar(aTHX_ const, newSVpvs_share(name))))
+   ADD_ENCODING("ASCII",     SECRET_BUFFER_ENCODING_ASCII);
+   ADD_ENCODING("ISO8859_1", SECRET_BUFFER_ENCODING_ISO8859_1);
+   ADD_ENCODING("UTF8",      SECRET_BUFFER_ENCODING_UTF8);
+   ADD_ENCODING("UTF16LE",   SECRET_BUFFER_ENCODING_UTF16LE);
+   ADD_ENCODING("UTF16BE",   SECRET_BUFFER_ENCODING_UTF16BE);
+   ADD_ENCODING("HEX",       SECRET_BUFFER_ENCODING_HEX);
+#undef ADD_ENCODING
+   // Set up an array of _encodings so that the accessor can return an existing SV
+   AV *encodings= get_av("Crypt::SecretBuffer::_encodings", GV_ADD);
+   av_fill(encodings, SECRET_BUFFER_ENCODING_MAX);
+   for (int i= 0; i <= SECRET_BUFFER_ENCODING_MAX; i++)
+      if (enc[i] && av_store(encodings, i, enc[i]))
+         SvREFCNT_inc(enc[i]);
    SECRET_BUFFER_EXPORT_FUNCTION_POINTERS

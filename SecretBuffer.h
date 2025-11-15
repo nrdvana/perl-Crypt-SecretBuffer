@@ -39,25 +39,33 @@ extern bool secret_buffer_charset_test_byte(const secret_buffer_charset *cset, U
 extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, uint32_t cp);
 
 /* encoding flags can be combined with other flags */
-#define SECRET_BUFFER_ENCODING_MASK     7
-#define SECRET_BUFFER_ENCODING_ASCII    0
-#define SECRET_BUFFER_ENCODING_UTF8     1
-#define SECRET_BUFFER_ENCODING_UTF16LE  2
-#define SECRET_BUFFER_ENCODING_UTF16BE  3
-#define SECRET_BUFFER_ENCODING_HEX      4
-#define SECRET_BUFFER_ENCODING_MAX      4
+#define SECRET_BUFFER_ENCODING_MASK      0xF
+#define SECRET_BUFFER_ENCODING_ISO8859_1 0
+#define SECRET_BUFFER_ENCODING_ASCII     1
+#define SECRET_BUFFER_ENCODING_UTF8      2
+#define SECRET_BUFFER_ENCODING_UTF16LE   3
+#define SECRET_BUFFER_ENCODING_UTF16BE   4
+#define SECRET_BUFFER_ENCODING_HEX       5
+#define SECRET_BUFFER_ENCODING_MAX       5
 
-#define SECRET_BUFFER_ENCODING_IS_UNICODE(x) \
-   (  (x) == SECRET_BUFFER_ENCODING_UTF8     \
-   || (x) == SECRET_BUFFER_ENCODING_UTF16LE  \
-   || (x) == SECRET_BUFFER_ENCODING_UTF16BE  \
+#define SECRET_BUFFER_ENCODING_IS_UNICODE(x)  \
+   (  (x) == SECRET_BUFFER_ENCODING_UTF8      \
+   || (x) == SECRET_BUFFER_ENCODING_UTF16LE   \
+   || (x) == SECRET_BUFFER_ENCODING_UTF16BE   \
+   || (x) == SECRET_BUFFER_ENCODING_ISO8859_1 \
    )
 
 typedef struct {
-   size_t pos, lim;
-   int encoding;
+   U8 *pos, *lim;
    const char *error;
+   int encoding;
 } secret_buffer_parse;
+
+/* Initialize a parse struct, and also verify that the described span is within the
+ * defined length of the buffer.  If not, it returns false and sets ->error.
+ */
+extern bool secret_buffer_parse_init(secret_buffer_parse *parse,
+   secret_buffer *buf, size_t pos, size_t lim, int encoding);
 
 /* Scan through a SecretBuffer looking for the first (and maybe also last)
  * character belonging to a set.  The 'pos' and 'lim' of the parse struct
@@ -81,16 +89,21 @@ typedef struct {
  * Note that every codepoint higher than 255 compared to a charset with the
  * maybe_unicode flag will call out to the perl regex engine and be a bit slow.
  */
-#define SECRET_BUFFER_SCAN_REVERSE  0x10
-#define SECRET_BUFFER_SCAN_NEGATE   0x20
-#define SECRET_BUFFER_SCAN_SPAN     0x40
-#define SECRET_BUFFER_SCAN_ANCHORED 0x80
-extern bool secret_buffer_scan(secret_buffer *sb, SV *pattern,
-                               secret_buffer_parse *parse_state, int flags);
-extern bool secret_buffer_scan_charset(secret_buffer *sb, secret_buffer_charset *cset,
-                                       secret_buffer_parse *parse_state, int flags);
-extern bool secret_buffer_scan_bytestr(secret_buffer *sb, char *data, size_t datalen,
-                                       secret_buffer_parse *parse_state, int flags);
+#define SECRET_BUFFER_MATCH_REVERSE  0x10
+#define SECRET_BUFFER_MATCH_NEGATE   0x20
+#define SECRET_BUFFER_MATCH_MULTI    0x40
+#define SECRET_BUFFER_MATCH_ANCHORED 0x80
+extern bool secret_buffer_match(secret_buffer_parse *p, SV *pattern, int flags);
+extern bool secret_buffer_match_charset(secret_buffer_parse *p, secret_buffer_charset *cset, int flags);
+extern bool secret_buffer_match_bytestr(secret_buffer_parse *p, char *data, size_t datalen, int flags);
+
+/* Count number of bytes required to transcode the source.
+ * If the source contains an invalid character for its encoding, or that codepoint
+ * can't be encoded as the dst_encoding, this returns -1 and sets src->error
+ * and also sets src->pos pointing at the character that could not be converted.
+ */
+extern SSize_t secret_buffer_sizeof_transcode(secret_buffer_parse *src, int dst_encoding);
+extern bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse *dst);
 
 /* Create a new Crypt::SecretBuffer object with a mortal ref and return its secret_buffer
  * struct pointer.

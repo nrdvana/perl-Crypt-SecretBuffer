@@ -193,20 +193,25 @@ replaced by a scalar referencing the actual secret.
    use Exporter 'import';
    @Crypt::SecretBuffer::Exports::EXPORT_OK= qw(
       secret_buffer secret unmask_secrets_to
-      NONBLOCK AT_LEAST UTF8 UTF16LE UTF16BE SCAN_SPAN SCAN_REVERSE SCAN_NEGATE
+      NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX
+      MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED
    );
    sub secret_buffer {
       Crypt::SecretBuffer->new(@_)
    }
-   *secret=       *secret_buffer;
-   *NONBLOCK=     *Crypt::SecretBuffer::NONBLOCK;
-   *AT_LEAST=     *Crypt::SecretBuffer::AT_LEAST;
-   *UTF8=         *Crypt::SecretBuffer::UTF8;
-   *UTF16LE=      *Crypt::SecretBuffer::UTF16LE;
-   *UTF16BE=      *Crypt::SecretBuffer::UTF16BE;
-   *SCAN_SPAN=    *Crypt::SecretBuffer::SCAN_SPAN;
-   *SCAN_REVERSE= *Crypt::SecretBuffer::SCAN_REVERSE;
-   *SCAN_NEGATE=  *Crypt::SecretBuffer::SCAN_NEGATE;
+   *secret=         *secret_buffer;
+   *NONBLOCK=       *Crypt::SecretBuffer::NONBLOCK;
+   *AT_LEAST=       *Crypt::SecretBuffer::AT_LEAST;
+   *ISO8859_1=      *Crypt::SecretBuffer::ISO8859_1;
+   *ASCII=          *Crypt::SecretBuffer::ASCII;
+   *UTF8=           *Crypt::SecretBuffer::UTF8;
+   *UTF16LE=        *Crypt::SecretBuffer::UTF16LE;
+   *UTF16BE=        *Crypt::SecretBuffer::UTF16BE;
+   *HEX=            *Crypt::SecretBuffer::HEX;
+   *MATCH_MULTI=    *Crypt::SecretBuffer::MATCH_MULTI;
+   *MATCH_REVERSE=  *Crypt::SecretBuffer::MATCH_REVERSE;
+   *MATCH_NEGATE=   *Crypt::SecretBuffer::MATCH_NEGATE;
+   *MATCH_ANCHORED= *Crypt::SecretBuffer::MATCH_ANCHORED;
 }
 
 sub import {

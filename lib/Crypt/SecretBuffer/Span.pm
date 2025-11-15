@@ -2,6 +2,10 @@ package Crypt::SecretBuffer::Span;
 # VERSION
 # ABSTRACT: Prevent accidentally leaking a string of sensitive data
 
+use strict;
+use warnings;
+use Crypt::SecretBuffer; # loads XS methods into this package
+
 =head1 SYNOPSIS
 
   use Crypt::SecretBuffer;
@@ -41,6 +45,7 @@ The C<SecretBuffer> this span refers to.  Spans hold a strong reference to the b
 
 =cut
 
+# span holds a ref to buffer, and it's less effort to let perl see it for things like iThread cloning.
 sub buf { $_[0]{buf} }
 *buffer= *buf;
 
@@ -93,12 +98,14 @@ span.
 
 =method trim
 
-  $span->trim(qr/[\s]+/, $flags=0)->...
+  $span->trim($pattern=qr/[\s]+/, $flags=0)->...
 
 Remove C<$pattern> from the start and end of the Span.  Returns the same C<Span> object, for
 chaining.  If you need to know how much was removed, use C<parse>/C<rparse> instead.  Note that
 if you pass a simple string, this only removes the pattern once.  You need C<< qr/...+/ >> to
 remove multiple occurrences, or the C<SPAN> flag.
+
+The default pattern is C<< qr/[\s]+/ >>.
 
 =over
 
@@ -111,6 +118,11 @@ Only remove from the start of the Span
 Only remove from the end of the Span
 
 =back
+
+=cut
+
+# used by XS, can be localized
+$Crypt::SecretBuffer::Span::default_trim_regex= qr/[\s]+/;
 
 =method starts_with
 

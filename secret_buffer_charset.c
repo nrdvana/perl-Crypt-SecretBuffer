@@ -20,7 +20,7 @@ struct secret_buffer_charset {
    #define SECRET_BUFFER_CHARSET_ALLUNI 1
    #define SECRET_BUFFER_CHARSET_TESTUNI 2
    int unicode_above_7F; // controls action when matching against unicode
-   bool match_span;      // stores whether regex ended with '+'
+   bool match_multi;     // stores whether regex ended with '+'
 };
 
 /* MAGIC vtable for cached charset */
@@ -120,7 +120,7 @@ static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, REGEXP *rx
 
    //warn("Attempting to parse '%.*s' %d  %c %c\n", (int)(lim-pos), pos, (int)RX_PRELEN(rx), *pos, lim[-1]);
    if (pos < lim && lim[-1] == '+') {
-      cset->match_span= true;
+      cset->match_multi= true;
       lim--;
    }
    if (pos >= lim || *pos != '[' || lim[-1] != ']')
