@@ -23,12 +23,16 @@ static bool parse_encoding(SV *sv, int *out) {
       STRLEN len;
       const char *str= SvPV(sv, len);
       switch (len) {
-      case 3: if (0 == strcmp(str, "HEX"))       enc= SECRET_BUFFER_ENCODING_HEX;     break;
-      case 4: if (0 == strcmp(str, "UTF8"))      enc= SECRET_BUFFER_ENCODING_UTF8;    break;
-      case 5: if (0 == strcmp(str, "ASCII"))     enc= SECRET_BUFFER_ENCODING_ASCII;   break;
-      case 7: if (0 == strcmp(str, "UTF16LE"))   enc= SECRET_BUFFER_ENCODING_UTF16LE;
-              if (0 == strcmp(str, "UTF16BE"))   enc= SECRET_BUFFER_ENCODING_UTF16BE; break;
-      case 9: if (0 == strcmp(str, "ISO8859_1")) enc= SECRET_BUFFER_ENCODING_ISO8859_1; break;
+      case  3: if (0 == strcmp(str, "HEX"))       enc= SECRET_BUFFER_ENCODING_HEX;     break;
+      case  4: if (0 == strcmp(str, "UTF8"))      enc= SECRET_BUFFER_ENCODING_UTF8;    break;
+      case  5: if (0 == strcmp(str, "ASCII"))     enc= SECRET_BUFFER_ENCODING_ASCII;   else
+               if (0 == strcmp(str, "UTF-8"))     enc= SECRET_BUFFER_ENCODING_UTF8;    break;
+      case  7: if (0 == strcmp(str, "UTF16LE"))   enc= SECRET_BUFFER_ENCODING_UTF16LE; else
+               if (0 == strcmp(str, "UTF16BE"))   enc= SECRET_BUFFER_ENCODING_UTF16BE; break;
+      case  8: if (0 == strcmp(str, "UTF-16LE"))  enc= SECRET_BUFFER_ENCODING_UTF16LE; else
+               if (0 == strcmp(str, "UTF-16BE"))  enc= SECRET_BUFFER_ENCODING_UTF16BE; break;
+      case  9: if (0 == strcmp(str, "ISO8859_1")) enc= SECRET_BUFFER_ENCODING_ISO8859_1; break;
+      case 10: if (0 == strcmp(str, "ISO-8859-1"))enc= SECRET_BUFFER_ENCODING_ISO8859_1; break;
       default:
          return false;
       }

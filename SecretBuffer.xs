@@ -1367,22 +1367,25 @@ copy_to(self, ...)
 
 BOOT:
    HV *stash= gv_stashpvs("Crypt::SecretBuffer", 1);
-   newCONSTSUB(stash, "NONBLOCK",     new_enum_dualvar(aTHX_ SECRET_BUFFER_NONBLOCK,      newSVpvs_share("NONBLOCK")));
-   newCONSTSUB(stash, "AT_LEAST",     new_enum_dualvar(aTHX_ SECRET_BUFFER_AT_LEAST,      newSVpvs_share("AT_LEAST")));
-   newCONSTSUB(stash, "MATCH_MULTI",  new_enum_dualvar(aTHX_ SECRET_BUFFER_MATCH_MULTI,   newSVpvs_share("MATCH_MULTI")));
-   newCONSTSUB(stash, "MATCH_REVERSE",new_enum_dualvar(aTHX_ SECRET_BUFFER_MATCH_REVERSE, newSVpvs_share("MATCH_REVERSE")));
-   newCONSTSUB(stash, "MATCH_NEGATE", new_enum_dualvar(aTHX_ SECRET_BUFFER_MATCH_NEGATE,  newSVpvs_share("MATCH_NEGATE")));
+#define EXPORT_CONST(name, const) \
+   newCONSTSUB(stash, name, new_enum_dualvar(aTHX_ const, newSVpvs_share(name)))
+   EXPORT_CONST("NONBLOCK",      SECRET_BUFFER_NONBLOCK);
+   EXPORT_CONST("AT_LEAST",      SECRET_BUFFER_AT_LEAST);
+   EXPORT_CONST("MATCH_MULTI",   SECRET_BUFFER_MATCH_MULTI);
+   EXPORT_CONST("MATCH_REVERSE", SECRET_BUFFER_MATCH_REVERSE);
+   EXPORT_CONST("MATCH_NEGATE",  SECRET_BUFFER_MATCH_NEGATE);
+#undef EXPORT_CONST
    SV *enc[SECRET_BUFFER_ENCODING_MAX+1];
    memset(enc, 0, sizeof(enc));
-#define ADD_ENCODING(name, const) \
-     newCONSTSUB(stash, name, (enc[const]= new_enum_dualvar(aTHX_ const, newSVpvs_share(name))))
-   ADD_ENCODING("ASCII",     SECRET_BUFFER_ENCODING_ASCII);
-   ADD_ENCODING("ISO8859_1", SECRET_BUFFER_ENCODING_ISO8859_1);
-   ADD_ENCODING("UTF8",      SECRET_BUFFER_ENCODING_UTF8);
-   ADD_ENCODING("UTF16LE",   SECRET_BUFFER_ENCODING_UTF16LE);
-   ADD_ENCODING("UTF16BE",   SECRET_BUFFER_ENCODING_UTF16BE);
-   ADD_ENCODING("HEX",       SECRET_BUFFER_ENCODING_HEX);
-#undef ADD_ENCODING
+#define EXPORT_ENCODING(name, str, const) \
+   newCONSTSUB(stash, name, (enc[const]= new_enum_dualvar(aTHX_ const, newSVpvs_share(str))))
+   EXPORT_ENCODING("ASCII",    "ASCII",      SECRET_BUFFER_ENCODING_ASCII);
+   EXPORT_ENCODING("ISO8859_1","ISO-8859-1", SECRET_BUFFER_ENCODING_ISO8859_1);
+   EXPORT_ENCODING("UTF8",     "UTF-8",      SECRET_BUFFER_ENCODING_UTF8);
+   EXPORT_ENCODING("UTF16LE",  "UTF-16LE",   SECRET_BUFFER_ENCODING_UTF16LE);
+   EXPORT_ENCODING("UTF16BE",  "UTF-16BE",   SECRET_BUFFER_ENCODING_UTF16BE);
+   EXPORT_ENCODING("HEX",      "HEX",        SECRET_BUFFER_ENCODING_HEX);
+#undef EXPORT_ENCODING
    // Set up an array of _encodings so that the accessor can return an existing SV
    AV *encodings= get_av("Crypt::SecretBuffer::_encodings", GV_ADD);
    av_fill(encodings, SECRET_BUFFER_ENCODING_MAX);

@@ -14,7 +14,7 @@ subtest constructors => sub {
          call lim => 6;
          call buf => $buf;
          call buffer => $buf;
-         call encoding => 'ISO8859_1';
+         call encoding => ISO8859_1;
       },
       'full buffer span';
 
@@ -26,7 +26,7 @@ subtest constructors => sub {
          call lim => 6;
          call buf => $buf;
          call buffer => $buf;
-         call encoding => 'ISO8859_1';
+         call encoding => ISO8859_1;
       },
       'full buffer span clone';
 
@@ -43,7 +43,7 @@ subtest constructors => sub {
          call buf => object { call length => 0; };
          call pos => 0;
          call len => 0;
-         call encoding => 'UTF8';
+         call encoding => UTF8;
       },
       'class constructor, all attributes, pos truncated' );
 
@@ -54,7 +54,7 @@ subtest constructors => sub {
          call pos => 4;
          call lim => 7;
          call len => 3;
-         call encoding => 'ISO8859_1';
+         call encoding => ISO8859_1;
       },
       'class constructor, negative pos';
 
@@ -75,7 +75,7 @@ subtest constructors => sub {
          call lim => 7;
          call len => 2;
          call buf => object { call length => 8; };
-         call encoding => 'UTF8';
+         call encoding => UTF8;
       },
       'clone with positional negative pos override';
 
@@ -95,7 +95,7 @@ subtest constructors => sub {
    $s->lim(7);
    is $s->len, 6, 'pos/lim modified, len updated';
    $s->encoding(UTF8);
-   is $s->encoding, 'UTF8', 'encoding changed to enum';
+   is $s->encoding, UTF8, 'encoding changed to enum';
 
    is $buf->span(2,3,UTF8)->subspan(1),
       object {
@@ -135,7 +135,7 @@ subtest starts_with => sub {
    $s->encoding(ISO8859_1);
    ok $s->starts_with(qr/[\xC4]/), 'starts with byte';
    # it will decode the character
-   $s->encoding('UTF8');
+   $s->encoding('UTF-8');
    ok $s->starts_with(qr/[\x{100}]/), 'starts with utf-8 char';
 };
 
