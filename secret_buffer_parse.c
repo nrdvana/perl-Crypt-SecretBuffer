@@ -90,9 +90,6 @@ bool secret_buffer_match_charset(secret_buffer_parse *parse, secret_buffer_chars
  * by parse_state->encoding.
  */
 bool secret_buffer_match_bytestr(secret_buffer_parse *parse, char *data, size_t datalen, int flags) {
-   if (parse->pos >= parse->lim) // empty range
-      return false;
-
    return sb_parse_match_bytestr(parse, data, datalen, flags);
 }
 
@@ -204,7 +201,6 @@ static bool sb_parse_match_charset_bytes(
    return span_start != NULL;
 }
 
-// Called by secret_buffer_scan, which verified the range of th
 static bool sb_parse_match_charset_codepoints(
    secret_buffer_parse *parse,
    const secret_buffer_charset *cset,
@@ -513,62 +509,88 @@ bool sb_parse_match_bytestr(secret_buffer_parse *parse, const U8 *pattern, size_
    bool reverse= (flags & SECRET_BUFFER_MATCH_REVERSE);
    bool multi=   (flags & SECRET_BUFFER_MATCH_MULTI);
    bool anchored=(flags & SECRET_BUFFER_MATCH_ANCHORED);
-   parse->error = NULL;
-   if (parse->pos >= parse->lim) // empty range
-      return false;
+   bool negate=  (flags & SECRET_BUFFER_MATCH_NEGATE);
 
-   // Get this edge case out of the way.  Zero-length pattern is always found immediately.
-   if (pattern_len == 0) {
-      if (reverse)
-         parse->pos= parse->lim;
-      else
-         parse->lim= parse->pos;
-      return true;
-   }
-
-   // Consider a reduced range where the length of the string is removed from
-   // the buffer limit, resulting in a pointer to the last char ('pmax') which
-   // could possibly match 'bytestr'.
-   U8 first_ch= *pattern,
-     *pmin= parse->pos,
-     *pmax= parse->lim - pattern_len;
    if (reverse) {
-      if (anchored) pmin= pmax;
-      while (pmin <= pmax) {
-         if (*pmax == first_ch && 0 == memcmp(pmax, pattern, pattern_len)) {
-            parse->pos= pmax;
-            parse->lim= pmax + pattern_len;
-            if (multi) {
-               while (pmax - pmin >= pattern_len && pmax[-pattern_len] == first_ch
-                  && 0 == memcmp(pmax-pattern_len, pattern, pattern_len))
-                  pmax -= pattern_len;
-               parse->pos= pmax;
-            }
-            break;
-         }
-         --pmax;
+      U8 *orig_lim= parse->lim;
+      // back up by whole characters until there are at least pattern_len bytes from the current
+      // character until the original limit
+      while (parse->lim > orig_lim - pattern_len) {
+         if (parse->lim <= parse->pos)
+            return false;
+         if (sb_parse_prev_codepoint(parse) < 0)
+            return false; // encoding error
       }
-   } else {
-      if (anchored) pmax= pmin;
-      while (pmin <= pmax) {
-         if (*pmin == first_ch && 0 == memcmp(pmin, pattern, pattern_len)) {
-            parse->pos= pmin;
-            parse->lim= pmin + pattern_len;
+      // from here forward, ->lim is acting like a 'pos' and is safe for a memcmp of pattern_len bytes
+      while (1) {
+         if ((0 == memcmp(parse->lim, pattern, pattern_len)) != negate) {
+            // Found.
+            U8 *match_pos= parse->lim;
+            U8 *match_lim= parse->lim + pattern_len;
+            // Are we looking for a span of matches?
             if (multi) {
-               while (pmax - pmin >= pattern_len && pmin[pattern_len] == first_ch
-                  && 0 == memcmp(pmin+pattern_len, pattern, pattern_len))
-                  pmin += pattern_len;
-               parse->lim= pmin + pattern_len;
+               while (1) {
+                  // In the negate condition, need to step by whole characters.
+                  // Else need to step by whole matches of the pattern.
+                  if (!negate) 
+                     parse->lim -= pattern_len;
+                  else if (sb_parse_prev_codepoint(parse) < 0)
+                     break; // encoding error
+                  if (parse->lim < parse->pos) break;
+                  if ((0 == memcmp(parse->lim, pattern, pattern_len)) == negate) {
+                     // in the negate case, need to move match_pos to the end of the match.
+                     if (negate && pattern_len > 1)
+                        match_pos= parse->lim + pattern_len;
+                     break;
+                  }
+                  // still matching (or not matching)
+                  match_pos= parse->lim;
+               }
             }
-            break;
+            parse->pos= match_pos;
+            parse->lim= match_lim;
+            return true;
          }
-         ++pmin;
+         else if (anchored)
+            break;
+         // step backward one character.  prev_codepoint will fail if there isn't a char available
+         if (parse->lim <= parse->pos)
+            break;
+         if (sb_parse_prev_codepoint(parse) < 0)
+            break; // encoding error
+      }
+   } else { // forward
+      U8 *pmax= parse->lim - pattern_len;
+      while (parse->pos <= pmax) {
+         if ((0 == memcmp(parse->pos, pattern, pattern_len)) != negate) {
+            // Found
+            U8 *match_pos= parse->pos;
+            U8 *match_lim= parse->pos + pattern_len;
+            // Are we looking for a span of matches?
+            if (multi) {
+               while (1) {
+                  // In the negate condition, need to step by whole characters.
+                  // Else need to step by whole matches of the pattern.
+                  if (!negate)
+                     parse->pos += pattern_len;
+                  else if (sb_parse_next_codepoint(parse) < 0)
+                     break; // encoding error
+                  if (parse->pos > pmax
+                     || (0 == memcmp(parse->pos, pattern, pattern_len)) == negate)
+                     break;
+                  match_lim= parse->pos + pattern_len;
+               }
+            }
+            parse->pos= match_pos;
+            parse->lim= match_lim;
+            return true;
+         }
+         else if (anchored)
+            break;
+         // step forward one character
+         if (sb_parse_next_codepoint(parse) < 0)
+            break; // encoding error
       }
    }
-   if (pmin > pmax) { // Not found, describe a zero-length range
-      parse->pos= pmin;
-      parse->lim= pmin;
-      return false;
-   }
-   return true;
+   return false;
 }

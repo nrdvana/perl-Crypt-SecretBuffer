@@ -2,7 +2,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
 use Encode qw( encode decode );
-use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 UTF16LE UTF16BE HEX);
+use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 UTF16LE UTF16BE HEX MATCH_NEGATE MATCH_MULTI );
 
 subtest constructors => sub {
    my $buf= secret("abcdef");
@@ -165,6 +165,21 @@ subtest ends_with => sub {
    ok( $s->span(encoding => UTF16BE)->ends_with(qr/[\x{1234}]/), 'parse utf-16be in reverse' );
    $s= secret(encode('UTF-16BE', "123\x{12345}"));
    ok( $s->span(encoding => UTF16BE)->ends_with(qr/[\x{12345}]/), 'parse utf-16be surrogates in reverse' );
+};
+
+subtest parse => sub {
+   my $s= secret("name=val")->span;
+   is $s->parse("="), undef, 'no = anchored at start';
+   is $s->parse(qr/[a-z]+/), object { call pos => 0; call len => 4; }, 'parse name';
+   is $s->parse("="), object { call pos => 4; call len => 1; }, 'parse =';
+   is $s, object { call pos => 5; call len => 3; }, 'remaining value';
+
+   $s= $s->buf->span;
+   is $s->parse('=', MATCH_NEGATE|MATCH_MULTI), object { call pos => 0; call len => 4; }, 'parse name by MATCH_NEGATE =';
+
+   $s= secret("1=2==3=4")->span;
+   is $s->rparse('==', MATCH_NEGATE|MATCH_MULTI), object { call pos => 5; call len => 3; }, 'parse value by reverse MATCH_NEGATE =';
+   is $s, object { call pos => 0; call len => 5; }, 'remianing buffer';
 };
 
 subtest trim => sub {
