@@ -334,16 +334,15 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
          pos++;
       if (lim - pos < 2)
          SB_RETURN_ERROR("not enough hex chars in range")
-      int high= pos[0] - '0';
-      int low= pos[1] - '0';
+      int high= *pos++ - '0';
+      int low= *pos++ - '0';
       if (low >= ('a'-'0')) low -= ('a'-'0'-10);
       else if (low >= ('A'-'0')) low -= ('A'-'0'-10);
       if (high >= ('a'-'0')) high -= ('a'-'0'-10);
       else if (high >= ('A'-'0')) high -= ('A'-'0'-10);
       if ((low >> 4) | (high >> 4))
          SB_RETURN_ERROR("not a pair of hex digits")
-      pos += 2;
-      return (high << 4) | low;
+      cp= (high << 4) | low;
    }
    else SB_RETURN_ERROR("unknown encoding")
    parse->pos= pos;
@@ -411,8 +410,8 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse) {
          lim--;
       if (lim - pos < 2)
          SB_RETURN_ERROR("not enough hex chars in range")
-      int low= *lim-- - '0';
-      int high= *lim-- - '0';
+      int low= *--lim - '0';
+      int high= *--lim - '0';
       if (low >= ('a'-'0')) low -= ('a'-'0'-10);
       else if (low >= ('A'-'0')) low -= ('A'-'0'-10);
       if (high >= ('a'-'0')) high -= ('a'-'0'-10);

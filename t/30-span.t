@@ -1,7 +1,8 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
-use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 );
+use Encode qw( encode decode );
+use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 UTF16LE UTF16BE HEX);
 
 subtest attributes => sub {
    my $buf= secret("abcdef");
@@ -101,6 +102,23 @@ subtest ends_with => sub {
    ok( $s->ends_with(qr/[a-z]/), 'ends with char class' );
    ok( $s->ends_with(qr/[a-z]+/), 'ends with char class repeated' );
    ok( !$s->ends_with(qr/[0-9]/), 'doesnt end with digit' );
+
+   # This tests the reverse decoding of various encodings
+   ok( $s->span(encoding => HEX)->ends_with(qr/[\xEF]/), 'parse hex in reverse' );
+   $s= secret(encode('UTF-8', "123\x{123}"));
+   ok( $s->span(encoding => UTF8)->ends_with(qr/[\x{123}]/), 'parse utf8 2-byte in reverse' );
+   $s= secret(encode('UTF-8', "123\x{1234}"));
+   ok( $s->span(encoding => UTF8)->ends_with(qr/[\x{1234}]/), 'parse utf8 3-byte in reverse' );
+   $s= secret(encode('UTF-8', "123\x{12345}"));
+   ok( $s->span(encoding => UTF8)->ends_with(qr/[\x{12345}]/), 'parse utf8 4-byte in reverse' );
+   $s= secret(encode('UTF-16LE', "123\x{1234}"));
+   ok( $s->span(encoding => UTF16LE)->ends_with(qr/[\x{1234}]/), 'parse utf-16le in reverse' );
+   $s= secret(encode('UTF-16LE', "123\x{12345}"));
+   ok( $s->span(encoding => UTF16LE)->ends_with(qr/[\x{12345}]/), 'parse utf-16le surrogates in reverse' );
+   $s= secret(encode('UTF-16BE', "123\x{1234}"));
+   ok( $s->span(encoding => UTF16BE)->ends_with(qr/[\x{1234}]/), 'parse utf-16be in reverse' );
+   $s= secret(encode('UTF-16BE', "123\x{12345}"));
+   ok( $s->span(encoding => UTF16BE)->ends_with(qr/[\x{12345}]/), 'parse utf-16be surrogates in reverse' );
 };
 
 subtest trim => sub {
@@ -132,7 +150,7 @@ subtest trim => sub {
       'rtrim';
 };
 
-subtest copy_bytes => sub {
+subtest copy_iso8859 => sub {
    my $s= secret("abcdef")->span;
    is $s->copy,
       object {
@@ -159,6 +177,46 @@ subtest copy_bytes => sub {
    is( $s->length, 6, 'span is 6 bytes' );
    ok( !eval { $s->copy }, 'copy died' );
    like( $@, qr/ends beyond buffer/, 'error message' );
+};
+
+subtest copy_widechar => sub {
+   my $unicode= "\0\x{10}\x{100}\x{1000}\x{10000}\x{10FFFD}";
+
+   my $utf8= encode('UTF-8', $unicode);
+   my $buf= '';
+   secret($utf8)->span(encoding => UTF8)->copy_to($buf);
+   is( $buf, $unicode, 'round trip through UTF-8' )
+      or note map escape_nonprintable($_)."\n", $utf8, $buf;
+
+   my $utf16le= encode('UTF-16LE', $unicode);
+   $buf= '';
+   secret($utf16le)->span(encoding => UTF16LE)->copy_to($buf);
+   is( $buf, $unicode, 'round trip through UTF-16LE' )
+      or diag explain $buf;
+
+   my $utf16be= encode('UTF-16BE', $unicode);
+   $buf= '';
+   secret($utf16be)->span(encoding => UTF16BE)->copy_to($buf);
+   is( $buf, $unicode, 'round trip through UTF-16BE' )
+      or diag explain $buf;
+};
+
+subtest copy_hex => sub {
+   my $s= secret("\x01\x02\x03");
+   is( $s->span->copy(encoding => HEX),
+      object {
+         call sub { shift->span->starts_with("010203") }, T;
+         call length => 6;
+      },
+      'convert to hex' );
+
+   $s= secret("010203");
+   is( $s->span(encoding => HEX)->copy(encoding => ISO8859_1),
+      object {
+         call sub { shift->span->starts_with("\x01\x02\x03") }, T;
+         call length => 3;
+      },
+      'convert from hex' );
 };
 
 done_testing;
