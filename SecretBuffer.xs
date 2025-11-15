@@ -1076,11 +1076,12 @@ wait(result, timeout=-1)
 MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::Span
 
 void
-span(class_or_obj, ...)
+new(class_or_obj, ...)
    SV *class_or_obj
    ALIAS:
-      new = 1
-      Crypt::SecretBuffer::span = 2
+      clone = 1
+      subspan = 2
+      Crypt::SecretBuffer::span = 3
    INIT:
       secret_buffer_span *span= secret_buffer_span_from_magic(class_or_obj, SECRET_BUFFER_MAGIC_UNDEF_OK);
       SV **buf_field= span && SvTYPE(SvRV(class_or_obj)) == SVt_PVHV
@@ -1089,7 +1090,8 @@ span(class_or_obj, ...)
       secret_buffer *buf= secret_buffer_from_magic(
          buf_field? *buf_field : class_or_obj, SECRET_BUFFER_MAGIC_UNDEF_OK
       );
-      IV base_pos= span? span->pos : 0;
+      bool subspan= span && ix == 2;
+      IV base_pos= subspan? span->pos : 0;
       IV pos, lim, len, base_lim;
       int encoding= span? span->encoding : 0, i;
       SV *encoding_sv= NULL;
@@ -1138,13 +1140,15 @@ span(class_or_obj, ...)
       // buffer is required
       if (!buf)
          croak("Require 'buf' attribute");
-      base_lim= span? span->lim : buf->len;
+      base_lim= subspan? span->lim : buf->len;
       // pos is relative to base_pos, and needs truncated to (or count backward from) base_lim
       pos= have_pos? normalize_offset(pos, base_lim-base_pos)+base_pos
+         : span    ? span->pos
                    : base_pos;
       // likewise for lim, but also might need calculated from 'len'
       lim= have_lim? normalize_offset(lim, base_lim-base_pos)+base_pos
          : have_len? normalize_offset(len, base_lim-pos)+pos
+         : span    ? span->lim
                    : base_lim;
       if (pos > lim)
          croak("lim must be greater or equal to pos");

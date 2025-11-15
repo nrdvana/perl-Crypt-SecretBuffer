@@ -39,6 +39,31 @@ wanted, you can extract it to another SecretBuffer object or a non-secret scalar
 to apply regexes to the buffer without it getting copied into scalars, defeating the purpose
 of SecretBuffer).
 
+=constructor new
+
+  $span= Crypt::SecretBuffer::Span->new(%attributes);
+
+The only required attribute is C<buf>.  C<pos> and C<lim> will default to the length of the
+buffer, and C<encoding> defaults to C<ISO8859_1> which treats each byte as an 8-bit unicode
+codepoint.
+
+If called as a mehtod on an object, this behaves the same as L</clone>.
+
+=constructor clone
+
+  $span= $span->clone(%attributes);
+
+Create a new span that inherits C<pos>, C<lim>, C<buf>, and C<encoding> from the first span
+if they weren't overridden in the attributes.
+
+=constructor subspan
+
+  $span= $span->subspan($pos, $len);
+  $span= $span->subspan(pos => $pos, lim => $lim);
+
+Like C<clone>, but C<$pos> and C<$lim> (and negative L<$len> values) are relative to the current
+span instead of absolute offsets into the buffer.
+
 =attribute buf
 
 The C<SecretBuffer> this span refers to.  Spans hold a strong reference to the buffer.
@@ -68,16 +93,6 @@ greater than the length of the buffer unless you alter the buffer length.
 
 Read-only; this determines how characters will be iterated within the SecretBuffer.  This
 carries over to Span objects created from this span.
-
-=method span
-
-  $new_span= $span->span(%attributes);
-  $new_span= $span->span($ofs);
-  $new_span= $span->span($ofs, $len);
-
-You can specify key/value C<%attributes> directly, or if the first argument is numeric this
-behaves like C<substr>, including handling of negative indices to refer to positions relative
-to the end of the buffer.
 
 =method parse
 

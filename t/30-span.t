@@ -4,7 +4,7 @@ use Test2AndUtils;
 use Encode qw( encode decode );
 use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 UTF16LE UTF16BE HEX);
 
-subtest attributes => sub {
+subtest constructors => sub {
    my $buf= secret("abcdef");
    is $buf->span,
       object {
@@ -18,47 +18,25 @@ subtest attributes => sub {
       },
       'full buffer span';
 
-   my $s= secret("abcdef")->span(5);
-   is( $s->pos, 5, 'pos' );
-   is( $s->len, 1, 'len' );
-   is( $s->lim, 6, 'lim' );
-
-   $s= secret("abcdef")->span(2,3);
-   is( $s->pos, 2, 'pos' );
-   is( $s->len, 3, 'len' );
-   is( $s->lim, 5, 'lim' );
-
-   $s->encoding(UTF8);
-   is $s->encoding, 'UTF8', 'encoding changed to enum';
-
-   is $s->span(1),
+   is $buf->span->clone,
       object {
-         call pos => 3;
-         call len => 2;
-         call lim => 5;
-         call encoding => 'UTF8';
-      },
-      'sub-span adds pos and preserves encoding';
-
-   is $s->span(-2, -1),
-      object {
-         call pos => 3;
-         call len => 1;
-         call lim => 4;
-      },
-      'sub-span negative indices relative to parent span';
-
-   my $x= "\x{100}\x{200}\x{300}";
-   utf8::encode($x);
-   # ascii doesn't take effect until attempting to scan chars, so this works
-   is secret($x)->span(pos => 1, len => 5, encoding => 'ASCII'),
-      object {
-         call pos => 1;
-         call len => 5;
+         call pos => 0;
+         call len => 6;
+         call length => 6;
          call lim => 6;
-         call encoding => 'ASCII';
+         call buf => $buf;
+         call buffer => $buf;
+         call encoding => 'ISO8859_1';
       },
-      'buf->span with attributes';
+      'full buffer span clone';
+
+   is $buf->span(1,-1),
+      object { call pos => 1; call len => 4; call lim => 5; },
+      'span using negative pos and len';
+
+   is $buf->span(pos => 1, lim => 5),
+      object { call pos => 1; call len => 4; call lim => 5; },
+      'using attribute names';
 
    is( Crypt::SecretBuffer::Span->new(buf => secret(""), pos => 2, len => 2, encoding => 'UTF8'),
       object {
@@ -67,7 +45,74 @@ subtest attributes => sub {
          call len => 0;
          call encoding => 'UTF8';
       },
-      'class constructor with attributes' );
+      'class constructor, all attributes, pos truncated' );
+
+   my $s= Crypt::SecretBuffer::Span->new(buf => secret("abcdefgh"), pos => -4, len => -1);
+   is $s,
+      object {
+         call buf => object { call length => 8; };
+         call pos => 4;
+         call lim => 7;
+         call len => 3;
+         call encoding => 'ISO8859_1';
+      },
+      'class constructor, negative pos';
+
+   $s->encoding(UTF8);
+   is $s->clone(pos => -3),
+      object {
+         call pos => 5;
+         call lim => 7;
+         call len => 2;
+         call buf => object { call length => 8; };
+         call encoding => UTF8;
+      },
+      'clone with negative pos override';
+
+   is $s->clone(-3),
+      object {
+         call pos => 5;
+         call lim => 7;
+         call len => 2;
+         call buf => object { call length => 8; };
+         call encoding => 'UTF8';
+      },
+      'clone with positional negative pos override';
+
+   is $s->clone(len => 1),
+      object { call pos => 4; call lim => 5; call len => 1; },
+      'clone with new len';
+
+   is $s->clone(len => 5),
+      object { call pos => 4; call lim => 8; call len => 4; },
+      'clone with len that gets truncated';
+
+   is $s->clone(lim => 8),
+      object { call pos => 4; call lim => 8; call len => 4; },
+      'clone with new lim';
+
+   $s->pos(1);
+   $s->lim(7);
+   is $s->len, 6, 'pos/lim modified, len updated';
+   $s->encoding(UTF8);
+   is $s->encoding, 'UTF8', 'encoding changed to enum';
+
+   is $buf->span(2,3,UTF8)->subspan(1),
+      object {
+         call pos => 3;
+         call len => 2;
+         call lim => 5;
+         call encoding => UTF8;
+      },
+      'sub-span adds pos and preserves encoding';
+
+   is $buf->span(2,3)->subspan(-2, -1),
+      object {
+         call pos => 3;
+         call lim => 4;
+         call len => 1;
+      },
+      'sub-span negative indices relative to parent span';
 };
 
 subtest starts_with => sub {
@@ -104,6 +149,7 @@ subtest ends_with => sub {
    ok( !$s->ends_with(qr/[0-9]/), 'doesnt end with digit' );
 
    # This tests the reverse decoding of various encodings
+   $s= $s->buf;
    ok( $s->span(encoding => HEX)->ends_with(qr/[\xEF]/), 'parse hex in reverse' );
    $s= secret(encode('UTF-8', "123\x{123}"));
    ok( $s->span(encoding => UTF8)->ends_with(qr/[\x{123}]/), 'parse utf8 2-byte in reverse' );
