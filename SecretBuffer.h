@@ -39,14 +39,14 @@ extern bool secret_buffer_charset_test_byte(const secret_buffer_charset *cset, U
 extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, uint32_t cp);
 
 /* encoding flags can be combined with other flags */
-#define SECRET_BUFFER_ENCODING_MASK      0xF
-#define SECRET_BUFFER_ENCODING_ISO8859_1 0
-#define SECRET_BUFFER_ENCODING_ASCII     1
-#define SECRET_BUFFER_ENCODING_UTF8      2
-#define SECRET_BUFFER_ENCODING_UTF16LE   3
-#define SECRET_BUFFER_ENCODING_UTF16BE   4
-#define SECRET_BUFFER_ENCODING_HEX       5
-#define SECRET_BUFFER_ENCODING_MAX       5
+#define SECRET_BUFFER_ENCODING_MASK      0xFF
+#define SECRET_BUFFER_ENCODING_ISO8859_1    0
+#define SECRET_BUFFER_ENCODING_ASCII        1
+#define SECRET_BUFFER_ENCODING_UTF8         2
+#define SECRET_BUFFER_ENCODING_UTF16LE      3
+#define SECRET_BUFFER_ENCODING_UTF16BE      4
+#define SECRET_BUFFER_ENCODING_HEX          5
+#define SECRET_BUFFER_ENCODING_MAX          5
 
 #define SECRET_BUFFER_ENCODING_IS_UNICODE(x)  \
    (  (x) == SECRET_BUFFER_ENCODING_UTF8      \
@@ -89,10 +89,10 @@ extern bool secret_buffer_parse_init(secret_buffer_parse *parse,
  * Note that every codepoint higher than 255 compared to a charset with the
  * maybe_unicode flag will call out to the perl regex engine and be a bit slow.
  */
-#define SECRET_BUFFER_MATCH_REVERSE  0x10
-#define SECRET_BUFFER_MATCH_NEGATE   0x20
-#define SECRET_BUFFER_MATCH_MULTI    0x40
-#define SECRET_BUFFER_MATCH_ANCHORED 0x80
+#define SECRET_BUFFER_MATCH_REVERSE  0x100
+#define SECRET_BUFFER_MATCH_NEGATE   0x200
+#define SECRET_BUFFER_MATCH_MULTI    0x400
+#define SECRET_BUFFER_MATCH_ANCHORED 0x800
 extern bool secret_buffer_match(secret_buffer_parse *p, SV *pattern, int flags);
 extern bool secret_buffer_match_charset(secret_buffer_parse *p, secret_buffer_charset *cset, int flags);
 extern bool secret_buffer_match_bytestr(secret_buffer_parse *p, char *data, size_t datalen, int flags);
