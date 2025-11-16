@@ -196,10 +196,6 @@ replaced by a scalar referencing the actual secret.
       NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX
       MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED
    );
-   sub secret_buffer {
-      Crypt::SecretBuffer->new(@_)
-   }
-   *secret=         *secret_buffer;
    *NONBLOCK=       *Crypt::SecretBuffer::NONBLOCK;
    *AT_LEAST=       *Crypt::SecretBuffer::AT_LEAST;
    *ISO8859_1=      *Crypt::SecretBuffer::ISO8859_1;
@@ -238,18 +234,6 @@ also do things like C<< ->new(append_random => 16) >>.
 
 The functions C<secret_buffer> and C<secret> can be exported from this module as a shorthand
 for C<< Crypt::SecretBuffer->new(...) >>.
-
-=cut
-
-sub new {
-   my $self= bless {}, shift;
-   $self->assign(shift) if @_ == 1;
-   while (@_) {
-      my ($attr, $val)= splice(@_, 0, 2);
-      $self->$attr($val);
-   }
-   $self;
-}
 
 =attribute capacity
 

@@ -148,6 +148,11 @@ extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity
  */
 extern void secret_buffer_set_len(secret_buffer *buf, size_t new_len);
 
+/* Overwrite the buffer with the contents of the SV, taking into account
+ * whether it might be a scalar-ref, SecretBuffer, or SecretBuffer::Span.
+ */
+extern void secret_buffer_assign_sv(secret_buffer *buf, SV *src);
+
 /* Append N bytes of cryptographic quality random bytes to the end of the buffer.
  * This may block if your entropy pool is low.
  * If you request the flag 'NONBLOCK' it performs a non-blocking read.  Note that

@@ -1,11 +1,3 @@
-typedef struct secret_buffer_span {
-   size_t pos, lim;
-   int encoding;
-} secret_buffer_span;
-
-// For typemap
-typedef secret_buffer_span *auto_secret_buffer_span;
-
 /*
  * SecretBuffer Span Magic
  */
