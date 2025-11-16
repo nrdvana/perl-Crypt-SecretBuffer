@@ -5,33 +5,46 @@ package Crypt::SecretBuffer::INI;
 use strict;
 use warnings;
 use Carp;
-use Crypt::SecretBuffer qw/ secret MATCH_NEGATE MATCH_MULTI /;
+use Crypt::SecretBuffer qw/ secret MATCH_NEGATE MATCH_MULTI ISO8859_1 /;
 
 =head1 SYNOPSIS
 
-  use Crypt::SecretBuffer qw/ secret SECRET HEX /;
+  use Crypt::SecretBuffer qw/ secret HEX /;
   use Crypt::SecretBuffer::INI;
   
-  # For file contents:
-  #
-  # [test]
-  # name = value
-  # aes_key = 001122334455
+  my $input= secret(<<END);
+  [database]
+  user=myapp
+  password=hunter2
+  [database.encryption]
+  aes_key=0123456789ABCDEF
+  [email]
+  smtp_auth=sldkdsjfldsjklfadsjkf
+  END
   
   my $ini= Crypt::SecretBuffer::INI->new(
+    section_delim => '.',
     field_config => [
-      aes_key => { secret => 1, encoding => HEX },
+      password  => { secret => 1 },
+      smtp_auth => { secret => 1 },
+      aes_key   => { secret => 1, encoding => HEX },
     ]
   );
-  my $config= $ini->parse(secret(load_file => $path));
-  
-  # Now you have:
-  # config => {
-  #   test => {
-  #     name    => 'value',
-  #     aes_key => secret("\x00\x11\x22\x33\x44\x55"),
-  #   }
-  # }
+  my $config= $ini->parse($input);
+  print Data::Dumper->new([$config])
+    ->Terse(1)->Sortkeys(1)->Indent(2)->Dump;
+  #{
+  #  'database' => {
+  #    'encryption' => {
+  #      'aes_key' => bless( {}, 'Crypt::SecretBuffer' )
+  #    },
+  #    'password' => bless( {}, 'Crypt::SecretBuffer' ),
+  #    'user' => 'myapp'
+  #  },
+  #  'email' => {
+  #    'smtp_auth' => bless( {}, 'Crypt::SecretBuffer' )
+  #  }
+  #}
   
   # Produce a file with secrets:
   $out= secret;
@@ -107,23 +120,23 @@ which also means your values can't contain the comment character.
 
 =cut
 
-sub comment_delim {
-   @_ > 1? ($_[0]{comment_delim}= $_[1]) : $_[0]{comment_delim}
-}
-sub inline_comments {
-   @_ > 1? ($_[0]{inline_comments}= $_[1]) : $_[0]{inline_comments}
+sub key_value_delim {
+   @_ > 1? ($_[0]{key_value_delim}= $_[1]) : $_[0]{key_value_delim}
 }
 sub bare_keys {
    @_ > 1? ($_[0]{bare_keys}= !!$_[1]) : $_[0]{bare_keys}
-}
-sub key_value_delim {
-   @_ > 1? ($_[0]{key_value_delim}= $_[1]) : $_[0]{key_value_delim}
 }
 sub trim_chars {
    @_ > 1? ($_[0]{trim_chars}= $_[1]) : $_[0]{trim_chars}
 }
 sub section_delim {
    @_ > 1? ($_[0]{section_delim}= $_[1]) : $_[0]{section_delim}
+}
+sub comment_delim {
+   @_ > 1? ($_[0]{comment_delim}= $_[1]) : $_[0]{comment_delim}
+}
+sub inline_comments {
+   @_ > 1? ($_[0]{inline_comments}= $_[1]) : $_[0]{inline_comments}
 }
 
 =attribute field_config
@@ -170,7 +183,7 @@ sub _coerce_field_rules {
       if (!ref $rule or ref $rule eq 'Regexp') {
          my $v= $rule_spec->[++$i];
          if (ref $v eq 'ARRAY') {
-            $rule= { section => $_, rules => $v };
+            $rule= { section => $rule, rules => $v };
          } elsif (ref $v eq 'HASH') {
             $rule= { key => $rule, %$v };
          } elsif (defined $v) {
@@ -201,7 +214,7 @@ sub _find_field_rule {
          # it can match in ful, or in part, and if the user defines a section hierarchy
          # separator then we need to determine how much of the section name to pass to the
          # recursive call.
-         my $sep= $self->section_split_char;
+         my $sep= $self->section_delim;
          my $key_rule;
          if (ref $_->{section} eq 'Regexp') {
             if ($section =~ $_->{section}) {
@@ -329,6 +342,7 @@ sub parse {
    my $span= $buf_or_span->can('subspan')? $buf_or_span : $buf_or_span->span;
    my ($node, $section, $key, $value);
    my $sep= $self->section_delim;
+   $sep= qr/\Q$sep\E/ if defined $sep && ref $sep ne 'Regexp';
    my $root= defined $sep? {} : [];
    while (my $tokens= $self->parse_next($span)) {
       croak $tokens->{error}
@@ -338,9 +352,8 @@ sub parse {
          if (defined $sep) {
             $node= $root;
             for (split $sep, $section) {
-               if (defined $node->{$_} && ref $node->{$_} ne 'HASH') {
-                  croak("conflict between section name and pre-existing key of parent section");
-               }
+               croak("conflict between section name and pre-existing key of parent section")
+                  if defined $node->{$_} && ref $node->{$_} ne 'HASH';
                $node= ($node->{$_} ||= {});
             }
          } else {
@@ -363,7 +376,7 @@ sub parse {
             $tokens->{value}->encoding($rule->{encoding})
                if defined $rule->{encoding};
             if ($rule->{secret}) {
-               $tokens->{value}->copy_to($value= secret);
+               $tokens->{value}->copy_to(($value= secret), encoding => ISO8859_1);
             } else {
                $tokens->{value}->copy_to($value= '');
             }

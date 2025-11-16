@@ -27,7 +27,7 @@ int secret_buffer_span_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
    secret_buffer_span *clone= NULL;
    PERL_UNUSED_VAR(param);
    if (mg->mg_ptr) {
-      Newxz(clone, 1, secret_buffer_parse);
+      Newx(clone, 1, secret_buffer_span);
       memcpy(clone, mg->mg_ptr, sizeof(secret_buffer_span));
       mg->mg_ptr = (char *)clone;
    }

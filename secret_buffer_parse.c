@@ -132,8 +132,10 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse *dst)
    // If the source and destination encodings are both bytes, use memcpy
    if (dst->encoding == src->encoding && src->encoding == 0) {
       size_t cnt= dst->lim - dst->pos;
-      if (src->lim - src->pos != cnt)
-         croak("miscalculated buffer length");
+      if (src->lim - src->pos != cnt) {
+         dst->error= "miscalculated buffer length";
+         return false;
+      }
       memcpy(dst->pos, src->pos, cnt);
       dst->pos += cnt;
       src->pos += cnt;
@@ -268,7 +270,7 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
     || encoding == SECRET_BUFFER_ENCODING_UTF8
    ) {
       if (lim - pos < 1)
-         SB_RETURN_ERROR("parse range too small")
+         SB_RETURN_ERROR("end of span")
       cp= *pos++;
       if (cp >= 0x80 && encoding == SECRET_BUFFER_ENCODING_ASCII)
          SB_RETURN_ERROR("not 7-bit ASCII")
@@ -315,7 +317,7 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
    ) {
       int low= encoding == SECRET_BUFFER_ENCODING_UTF16LE? 0 : 1;
       if (lim - pos < 2)
-         SB_RETURN_ERROR("parse range too small")
+         SB_RETURN_ERROR("end of span")
       cp= pos[low] | ((int)pos[low^1] << 8);
       pos += 2;
       if (cp >= 0xD800 && cp <= 0xDFFF) {
@@ -333,7 +335,7 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
       while (pos < lim && isspace(*pos))
          pos++;
       if (lim - pos < 2)
-         SB_RETURN_ERROR("not enough hex chars in range")
+         SB_RETURN_ERROR("end of span")
       int high= *pos++ - '0';
       int low= *pos++ - '0';
       if (low >= ('a'-'0')) low -= ('a'-'0'-10);
@@ -409,7 +411,7 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse) {
       while (pos < lim && isspace(lim[-1]))
          lim--;
       if (lim - pos < 2)
-         SB_RETURN_ERROR("not enough hex chars in range")
+         SB_RETURN_ERROR((pos == lim? "end of span" : "incomplete hex pair at end of span"))
       int low= *--lim - '0';
       int high= *--lim - '0';
       if (low >= ('a'-'0')) low -= ('a'-'0'-10);

@@ -1097,13 +1097,13 @@ copy_to(self, ...)
 
       need_bytes= secret_buffer_sizeof_transcode(&src, dst_encoding);
       if (need_bytes < 0)
-         croak("%s", dst.error);
+         croak("transcode sizeof failed: %s", src.error);
       append_ofs= dst_buf->len;
       secret_buffer_set_len(dst_buf, dst_buf->len + need_bytes);
       if (!secret_buffer_parse_init(&dst, dst_buf, append_ofs, append_ofs+need_bytes, dst_encoding))
          croak("%s", dst.error);
       if (!secret_buffer_transcode(&src, &dst))
-         croak("%s", src.error? src.error : dst.error);
+         croak("transcode failed: %s", src.error? src.error : dst.error);
       // If the output was actually a SV, assign that now
       if (dst_sv) {
          sv_setpvn_mg(dst_sv, dst_buf->data, dst_buf->len);

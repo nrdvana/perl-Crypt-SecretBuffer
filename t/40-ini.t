@@ -157,4 +157,42 @@ END
       'tree of sections';
 };
 
+# The example from the module SYNOPSIS
+subtest synopsis => sub {
+   my $input= secret(<<END);
+[database]
+user=myapp
+password=hunter2
+[database.encryption]
+aes_key=0123456789ABCDEF
+[email]
+smtp_auth=sldkdsjfldsjklfadsjkf
+END
+
+   my $ini= Crypt::SecretBuffer::INI->new(
+      section_delim => '.',
+      field_config => [
+         password  => { secret => 1 },
+         smtp_auth => { secret => 1 },
+         aes_key   => { secret => 1, encoding => HEX },
+      ]
+   );
+   my $config= $ini->parse($input);
+   use Data::Dumper;
+   is 'Data::Dumper'->new([$config])->Terse(1)->Indent(1)->Sortkeys(1)->Dump, <<END, 'test Dumper output';
+{
+  'database' => {
+    'encryption' => {
+      'aes_key' => bless( {}, 'Crypt::SecretBuffer' )
+    },
+    'password' => bless( {}, 'Crypt::SecretBuffer' ),
+    'user' => 'myapp'
+  },
+  'email' => {
+    'smtp_auth' => bless( {}, 'Crypt::SecretBuffer' )
+  }
+}
+END
+};
+
 done_testing;
