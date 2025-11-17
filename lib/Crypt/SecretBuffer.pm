@@ -185,6 +185,69 @@ replaced by a scalar referencing the actual secret.
 
 =back
 
+There are also constants for various character encodings, used by L</scan> and
+L<Crypt::SecretBuffer::Span/encoding>.
+
+=head2 Character Encodings
+
+=over 20
+
+=item ISO8859_1
+
+The default - bytes are treated as the first 256 codepoints of Unicode.
+
+=item ASCII
+
+Bytes are restricted to 7-bit ASCII.  High bytes throw an exception.
+
+=item HEX
+
+Decode hexadecimal from the buffer before comparing to bytes in the search
+string.  Hex is case-insensitive and whitespace in a HEX string is ignored,
+allowing the data to be line-wraped.  There must be a multiple of two hex
+characters, and each byte's characters must be adjacent.
+
+=item UTF8
+
+=item UTF16BE
+
+=item UTF16LE
+
+Treat the buffer as the specified character set, and die if any character
+scanned is not valid.  (unpaired surrogates, overlong encodings, etc).
+
+=back
+
+=head2 Match Flags
+
+=over
+
+=item MATCH_REVERSE
+
+Walk backward from the end of the buffer (or specified span) looking for a
+match.
+
+=item MATCH_MULTI
+
+Once found, keep scanning until the buffer does I<not> match.  This is the same
+as using a regex that ends with C<'+'>, but applies to the string searches as
+well.
+
+=item MATCH_NEGATE
+
+Invert the result of each comparison.  This saves you the trouble of creating a
+new regex with a negated character class.  It also works with plain-string searches,
+so e.g. C<< scan($str, MATCH_MULTI) >> will start at the first character that wasn't
+the start of a C<$str> match and include all characters until the first match or end
+of buffer.
+
+=item MATCH_ANCHORED
+
+Require the match begin at the start of the specified range of the buffer.
+(or with C<MATCH_REVERSE>, end at the end of the range of the buffer).
+
+=back
+
 =cut
 
 {
@@ -350,34 +413,23 @@ This function scans through the buffer looking for the first match of a string
 or a character class.  The scan can optionally be limited to an offset and
 length describing a substring of the buffer.  The return value is the position
 of the start of the match, and number of I<bytes> matched (which can be greater
-than one when matching a character class in UTF-8, or if C<SCAN_SPAN> flag is
-requested).  Unlike C<index> or C<rindex>, on failure the return value is an
-offset equal to the limit of the scan (C<$ofs> + C<$len>) and a length of zero.
+than one when matching a character class in UTF-8, or if C<MATCH_MULTI> flag is
+requested).  Unlike C<index> or C<rindex>, on failure the return value will be
+C<< (C<$ofs> + C<$len>, 0) >>, or with MATCH_REVERSE, C<< (C<$ofs>, 0) >>.
+Also unlike C<rindex>, a reverse scan must fall entirely within the range of
+C<< ($ofs, $len) >> rather than just starting before C<< $ofs+$len >>.
 
 Eventually, this function may be enhanced with full regex support, but for now
 it is limited to one character class and optionally a '+' modifier as an alias
-for flag SCAN_SPAN.  Until that enhancement occurs, your regex notation must
+for flag MATCH_MULTI.  Until that enhancement occurs, your regex notation must
 start with '[' and must end with either ']' or '+'.
 
-  ($ofs, $len)= $buf->scan(qr/[\w]+/); # implies SCAN_SPAN
+  ($ofs, $len)= $buf->scan(qr/[\w]+/); # implies MATCH_MULTI
 
-The following flags (exported as constants) are supported:
-
-=over
-
-=item UTF8
-
-=item UTF16BE
-
-=item UTF16LE
-
-Treat the buffer as the specified character set, and die if any character
-scanned is not valid.  (unpaired surrogates, overlong encodings, etc).  This
-also expands the definition of unicode character classes beyond the default of
-just ASCII.
-
-If you are searching for a plain string, B<< you must also encode the search
-string with the same encoding >>:
+The C<$flags> may be a bitwise OR of the L</Match Flags> and one
+L<Character Encoding|/Character Encodings>.
+If your pattern is a plain string (not regexp), B<< you must encode it with
+the same encoding >>.
 
   my $str= "\x{100}";
   utf8::encode($str);
@@ -386,24 +438,6 @@ string with the same encoding >>:
 Note that C<$ofs> and C<$len> are still byte positions, and still suitable for
 L</substr> on the buffer, which is different from Perl's substr on a unicode
 string which works in terms of characters.
-
-=item SCAN_REVERSE
-
-Walk backward from the end of the buffer (or specified span) looking for a
-match.  A failed match returns an C<$ofs> equal to the one supplied, and
-C<$len> of 0.
-
-=item SCAN_SPAN
-
-Once found, keep scanning until the buffer does *not* match.  This is the same
-as using a regex that ends with C<'+'>, but applies to the string searches as
-well, and works with SCAN_REVERSE to find the longest run of a character class.
-
-=item SCAN_NEGATE
-
-Invert the supplied character class.  Has no effect when using a literal stirng.
-
-=back
 
 =method substr
 
