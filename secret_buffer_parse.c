@@ -166,10 +166,10 @@ static bool sb_parse_match_charset_bytes(
    const secret_buffer_charset *cset,
    int flags
 ) {
-   bool negate=  (flags & SECRET_BUFFER_MATCH_NEGATE);
-   bool reverse= (flags & SECRET_BUFFER_MATCH_REVERSE);
-   bool multi=   (flags & SECRET_BUFFER_MATCH_MULTI) || cset->match_multi;
-   bool anchored=(flags & SECRET_BUFFER_MATCH_ANCHORED);
+   bool negate=   0 != (flags & SECRET_BUFFER_MATCH_NEGATE);
+   bool reverse=  0 != (flags & SECRET_BUFFER_MATCH_REVERSE);
+   bool multi=    0 != (flags & SECRET_BUFFER_MATCH_MULTI) || cset->match_multi;
+   bool anchored= 0 != (flags & SECRET_BUFFER_MATCH_ANCHORED);
    int step= reverse? -1 : 1;
    U8 *pos= reverse? parse->lim-1 : parse->pos,
       *lim= reverse? parse->pos-1 : parse->lim,
@@ -209,10 +209,10 @@ static bool sb_parse_match_charset_codepoints(
    int flags
 ) {
    dTHX;
-   bool negate=  (flags & SECRET_BUFFER_MATCH_NEGATE);
-   bool reverse= (flags & SECRET_BUFFER_MATCH_REVERSE);
-   bool multi=   (flags & SECRET_BUFFER_MATCH_MULTI) || cset->match_multi;
-   bool anchored=(flags & SECRET_BUFFER_MATCH_ANCHORED);
+   bool negate=   0 != (flags & SECRET_BUFFER_MATCH_NEGATE);
+   bool reverse=  0 != (flags & SECRET_BUFFER_MATCH_REVERSE);
+   bool multi=    0 != (flags & SECRET_BUFFER_MATCH_MULTI) || cset->match_multi;
+   bool anchored= 0 != (flags & SECRET_BUFFER_MATCH_ANCHORED);
    bool span_started= false;
    U8 *span_mark= NULL, *prev_mark= reverse? parse->lim : parse->pos;
 
@@ -508,10 +508,10 @@ static bool sb_parse_encode_codepoint(secret_buffer_parse *dst, int codepoint) {
 }
 
 bool sb_parse_match_bytestr(secret_buffer_parse *parse, const U8 *pattern, size_t pattern_len, int flags) {
-   bool reverse= (flags & SECRET_BUFFER_MATCH_REVERSE);
-   bool multi=   (flags & SECRET_BUFFER_MATCH_MULTI);
-   bool anchored=(flags & SECRET_BUFFER_MATCH_ANCHORED);
-   bool negate=  (flags & SECRET_BUFFER_MATCH_NEGATE);
+   bool reverse=  0 != (flags & SECRET_BUFFER_MATCH_REVERSE);
+   bool multi=    0 != (flags & SECRET_BUFFER_MATCH_MULTI);
+   bool anchored= 0 != (flags & SECRET_BUFFER_MATCH_ANCHORED);
+   bool negate=   0 != (flags & SECRET_BUFFER_MATCH_NEGATE);
 
    if (reverse) {
       U8 *orig_lim= parse->lim;
