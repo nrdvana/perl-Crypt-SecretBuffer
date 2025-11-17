@@ -144,27 +144,30 @@ sub inline_comments {
 This is an arrayref of rules that describe which flags should be applied to which
 type of keys.  Each element is of the form:
 
-  { key => $literal_or_pattern, flags => $flags },
+  { key => $literal_or_regex, encoding => $enc, secret => $bool },
 
 or
 
-  { section => $header_or_regex, rules => [
+  { section => $literal_or_regex, rules => [
      ...
   ]}
 
 As a convenience, that structure can be built from a shorter notation:
 
-  $literal_key     => $flags,
-  qr/$key_pattern/ => $flags,
-  $section_header => [
+  [
+    $literal_key     => \%attrs,
+    qr/$key_pattern/ => \%attrs,
+    $section_header => [
+      ...
+    ],
+    qr/$section_pattern/ => [
+      ...
+    ],
     ...
-  ],
-  qr/$section_pattern/ => [
-    ...
-  ],
-  ...
+  ]
 
-During a parse, rules are processed in order, and the first match wins.
+Note that the rule lists are arrays, not hashrefs.  THis allows them to have regexes as keys,
+and preserves order.  During a parse, rules are checked first to last, and the first match wins.
 
 =cut
 

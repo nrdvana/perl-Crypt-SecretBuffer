@@ -194,7 +194,7 @@ L<Crypt::SecretBuffer::Span/encoding>.
 
 =item ISO8859_1
 
-The default - bytes are treated as the first 256 codepoints of Unicode.
+The default; bytes are treated as the first 256 codepoints of Unicode.
 
 =item ASCII
 
@@ -202,10 +202,9 @@ Bytes are restricted to 7-bit ASCII.  High bytes throw an exception.
 
 =item HEX
 
-Decode hexadecimal from the buffer before comparing to bytes in the search
-string.  Hex is case-insensitive and whitespace in a HEX string is ignored,
-allowing the data to be line-wraped.  There must be a multiple of two hex
-characters, and each byte's characters must be adjacent.
+Decode hexadecimal from the buffer before comparing to bytes in the search string.
+Hex is case-insensitive and whitespace is ignored, allowing the data to be line-wraped.
+There must be a multiple of two hex characters, and each byte's characters must be adjacent.
 
 =item UTF8
 
@@ -213,7 +212,7 @@ characters, and each byte's characters must be adjacent.
 
 =item UTF16LE
 
-Treat the buffer as the specified character set, and die if any character
+Treat the buffer as the specified character encoding, and die if any character
 scanned is not valid.  (unpaired surrogates, overlong encodings, etc).
 
 =back
@@ -243,8 +242,8 @@ of buffer.
 
 =item MATCH_ANCHORED
 
-Require the match begin at the start of the specified range of the buffer.
-(or with C<MATCH_REVERSE>, end at the end of the range of the buffer).
+Require the match begin at the start of the specified span of the buffer.
+(or with C<MATCH_REVERSE>, end at the end of the span of the buffer).
 
 =back
 

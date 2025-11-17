@@ -1,6 +1,6 @@
 package Crypt::SecretBuffer::Span;
 # VERSION
-# ABSTRACT: Prevent accidentally leaking a string of sensitive data
+# ABSTRACT: Reference a span of bytes within a SecretBuffer
 
 use strict;
 use warnings;
@@ -9,10 +9,10 @@ use Crypt::SecretBuffer; # loads XS methods into this package
 =head1 SYNOPSIS
 
   use Crypt::SecretBuffer;
-  my $buf= Crypt::SecretBuffer->new->load_file("secrets.conf");
+  my $buf= Crypt::SecretBuffer->new(load_file => "secrets.conf");
   
   # Create a span, linked to $buf
-  my $s= $buf->span->utf8;
+  my $s= $buf->span(encoding => "UTF-8");
   
   # Trim leading whitespace
   $s->ltrim(qr/[\s]+/);
@@ -20,12 +20,12 @@ use Crypt::SecretBuffer; # loads XS methods into this package
   # Try parsing a '[' from the current position
   if ($s->parse('[')) {
     # start of a INI-style "[header]"
-    $header= $s->parse(qr/[^]\n]+/);  # capture until ']' or end of line
+    my $header_span= $s->parse(qr/[^]\n]+/);  # capture until ']' or end of line
     
     $s->parse(']')
       or die "Didn't find ']' at end of header";
 
-    $s->ltrim(qr/[\s]+/);
+    $header_span->copy_to(my $header); # no longer a secret
   }
 
 =head1 DESCRIPTION
@@ -44,8 +44,8 @@ SecretBuffer.  L<https://www.perlmonks.org/?node_id=11166676>.
 
   $span= Crypt::SecretBuffer::Span->new(%attributes);
 
-The only required attribute is C<buf>.  C<pos> and C<lim> will default to the length of the
-buffer, and C<encoding> defaults to C<ISO8859_1> which treats each byte as an 8-bit unicode
+The only required attribute is C<buf>.  C<pos> defaults to 0, C<lim> defaults to the length of
+the buffer, and C<encoding> defaults to C<ISO8859_1> which treats each byte as an 8-bit unicode
 codepoint.
 
 If called as a method on an object, this behaves the same as L</clone>.
@@ -103,8 +103,9 @@ Alias for C<len>.
 
 =attribute lim
 
-The "limit" (one-beyond-the-end) position, equal to C<< pos + len >>.  This will never be
-greater than the length of the buffer unless you alter the buffer length.
+The "limit" (one-beyond-the-end) position, equal to C<< pos + len >>.  Note that changes to the
+buffer may result in C<pos> or C<lim> referring to non-existent bytes, which will die if you try
+to acces them.  (a perl "die", not C "undefined behavior")
 
 =attribute encoding
 
@@ -166,13 +167,13 @@ $Crypt::SecretBuffer::Span::default_trim_regex= qr/[\s]+/;
 
   $bool= $span->starts_with($pattern);
 
-Return a boolean of whether $pattern matches at the start of the string.
+Return a boolean of whether $pattern matches from the start of the Span.
 
 =method ends_with
 
   $bool= $span->ends_with($pattern);
 
-Return a boolean of whether $pattern matches at the end of the string.
+Return a boolean of whether $pattern matches ending at the end of the Span.
 
 =method scan
 
