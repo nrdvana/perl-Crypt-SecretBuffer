@@ -50,7 +50,7 @@ subtest charset => sub {
    my @tests= (
       [ qr/[a-z]/                      => [97, 123], 0 ],
       [ qr/[a-z]/i                     => [65, 91, 97, 123], 0 ],
-      ($] ge '5.012'? ( # /xx wasn't added until 5.12
+      ($] ge '5.026'? ( # /xx wasn't added until 5.26
          [ qr/[a-z 5\x{100}]/ixx       => [53, 54, 65, 91, 97, 123], 2 ],
          [ qr/[a-z 5]/ixx              => [53, 54, 65, 91, 97, 123], 0 ],
       ):()),

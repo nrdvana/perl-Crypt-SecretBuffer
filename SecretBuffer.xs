@@ -7,6 +7,11 @@
 #define NEED_RX_PRECOMP
 #define NEED_RX_PRELEN
 #include "ppport.h"
+/* these weren't supplied by ppport.h */
+#ifndef RX_PRECOMP
+   #define RX_PRECOMP(rx)  ((rx)->precomp)
+   #define RX_PRELEN(rx)   ((rx)->prelen)
+#endif
 
 #include "SecretBuffer_config.h"
 
@@ -910,7 +915,7 @@ new(class_or_obj, ...)
          if (!parse_encoding(encoding_sv, &encoding))
             croak("Unknown encoding '%s'", SvPV_nolen(encoding_sv));
       }
-      PUSHs(new_mortal_span_obj(buf, pos, lim, encoding));
+      PUSHs(new_mortal_span_obj(aTHX_ buf, pos, lim, encoding));
 
 UV
 pos(span, newval_sv= NULL)
@@ -1027,7 +1032,7 @@ scan(self, pattern=NULL, flags= 0)
          if (parse.pos > parse.lim || parse.lim > (U8*) buf->data + buf->len)
             croak("BUG: parse pos=%p lim=%p buf.data=%p buf.len=%ld",
                parse.pos, parse.lim, buf->data, (long)buf->len);
-         PUSHs(new_mortal_span_obj(buf, parse.pos - (U8*) buf->data, parse.lim - (U8*) buf->data, span->encoding));
+         PUSHs(new_mortal_span_obj(aTHX_ buf, parse.pos - (U8*) buf->data, parse.lim - (U8*) buf->data, span->encoding));
       } else if (ret_type == 1) {
          if (matched)
             XSRETURN_YES;

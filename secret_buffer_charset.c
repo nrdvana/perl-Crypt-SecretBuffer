@@ -110,13 +110,39 @@ bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, uin
                          : ((c) >= 'A' && (c) <= 'F')? ((c) - 'A' + 10) \
                          : ((c) >= 'a' && (c) <= 'f')? ((c) - 'a' + 10) \
                          : -1)
-static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, REGEXP *rx) {
-   U32 rx_flags = RX_EXTFLAGS(rx);
-   const char *pos = RX_PRECOMP(rx);
-   const char *lim = pos + RX_PRELEN(rx);
+static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, SV *qr_ref) {
    uint64_t *bitmap= cset->bitmap;
    I32 range_start= -1;
    bool negated = false;
+/* before 5.10 the flags are hidden somewhere and ->extflgs doesn't exist */
+#ifdef RX_EXTFLAGS
+   U32 rx_flags = RX_EXTFLAGS(cset->rx);
+   bool flag_i= !!(rx_flags & RXf_PMf_FOLD);
+/* the /xx flag was added in 5.26 */
+#ifdef RXf_PMf_EXTENDED_MORE
+   bool flag_xx= !!(rx_flags & RXf_PMf_EXTENDED_MORE);
+#endif
+   const char *pos = RX_PRECOMP(cset->rx);
+   const char *lim = pos + RX_PRELEN(cset->rx);
+#else
+   /* collect the flags by parsing the stringified representation. */
+   bool flag_i= false;
+   STRLEN len;
+   const char *pos= SvPV(qr_ref, len);
+   const char *lim= pos + len;
+   if (len < 3 || pos[0] != '(' || pos[1] != '?' || lim[-1] != ')')
+      return false;
+   bool ignore= false;
+   for (pos += 2, lim--; *pos != ':'; ++pos) {
+      if (pos >= lim) // we can read *lim because we bcked it up one char
+         return false;
+      if (*pos == 'i' && !ignore)
+         flag_i= true;
+      else if (*pos == '-')
+         ignore= true;
+   }
+   pos++; /* cross ':' char */
+#endif
 
    //warn("Attempting to parse '%.*s' %d  %c %c\n", (int)(lim-pos), pos, (int)RX_PRELEN(rx), *pos, lim[-1]);
    if (pos < lim && lim[-1] == '+') {
@@ -193,7 +219,7 @@ static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, REGEXP *rx
          return false;
 // the /xx flag was added in 5.26
 #ifdef RXf_PMf_EXTENDED_MORE
-      else if ((c == ' ' || c == '\t') && (rx_flags & RXf_PMf_EXTENDED_MORE))
+      else if ((c == ' ' || c == '\t') && flag_xx)
          continue;
 #endif
       if (range_start >= 0) {
@@ -216,7 +242,7 @@ static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, REGEXP *rx
    if (pos+1 != lim) // regex did not end at ']', give up
       return false;
    //warn("bitmaps: %08llX %08llX %08llX %08llX\n", bitmap[0], bitmap[1], bitmap[2], bitmap[3]);
-   if (rx_flags & RXf_PMf_FOLD) {
+   if (flag_i) {
       // Latin1 case folding will be a mess best handled by the regex engine
       if (bitmap[2] | bitmap[3])
          return false;
@@ -239,7 +265,7 @@ static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, REGEXP *rx
 }
 
 /* Build bitmap by testing each byte through regex engine */
-static void build_charset_via_regex_engine(pTHX_ secret_buffer_charset *cset, REGEXP *rx) {
+static void build_charset_via_regex_engine(pTHX_ secret_buffer_charset *cset) {
    SV *test_sv= sv_2mortal(newSV(2));
    SvPOK_on(test_sv);
    SvCUR_set(test_sv, 1);
@@ -248,7 +274,7 @@ static void build_charset_via_regex_engine(pTHX_ secret_buffer_charset *cset, RE
    for (int c= 0; c < 256; c++) {
       buf[0]= (char) c;
       /* find the next match */
-      I32 result = pregexec(rx, buf, buf+1, buf, 0, test_sv, 1);
+      I32 result = pregexec(cset->rx, buf, buf+1, buf, 0, test_sv, 1);
       if (result > 0)
          sbc_bitmap_set(cset->bitmap, (unsigned char) c);
    }
@@ -274,19 +300,19 @@ static bool regex_is_single_charclass(REGEXP *rx) {
 }
 
 /* Main function: Get or create cached charset from regexp */
-secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *rx_sv) {
+secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *qr_ref) {
    MAGIC *mg;
    REGEXP *rx;
    secret_buffer_charset *cset;
    dTHX;
 
    /* Validate input */
-   if (!rx_sv || !(rx= SvRX(rx_sv)))
+   if (!qr_ref || !(rx= (REGEXP*)SvRX(qr_ref)))
       croak("Expected Regexp ref");
 
    /* Check for existing cached charset */
-   if (SvMAGICAL(rx_sv)) {
-      mg = mg_findext(rx_sv, PERL_MAGIC_ext, &secret_buffer_charset_magic_vtbl);
+   if (SvMAGICAL(qr_ref)) {
+      mg = mg_findext(qr_ref, PERL_MAGIC_ext, &secret_buffer_charset_magic_vtbl);
       if (mg && mg->mg_ptr) {
          cset= (secret_buffer_charset*)mg->mg_ptr;
          cset->rx= rx; // in case threading cloned us
@@ -301,12 +327,12 @@ secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *rx_sv) {
    Newxz(cset, 1, secret_buffer_charset);
    cset->rx = rx;
 
-   if (!parse_simple_charclass(aTHX_ cset, rx)) {
+   if (!parse_simple_charclass(aTHX_ cset, qr_ref)) {
       // reset bitmap
       for (int i= 0; i < sizeof(cset->bitmap)/sizeof(cset->bitmap[0]); i++)
          cset->bitmap[i]= 0;
       // Need to use regex engine and cache results of first 256 codepoints.
-      build_charset_via_regex_engine(aTHX_ cset, rx);
+      build_charset_via_regex_engine(aTHX_ cset);
       // If pattern has PMf_UNICODE or similar, it might match unicode
       //if (rx_flags & (RXf_PMf_LOCALE | RXf_PMf_UNICODE)) {
       // ...actually, if 'parse simple' couldn't handle it, need engine regardless
@@ -314,7 +340,7 @@ secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *rx_sv) {
    }
 
    /* Attach magic to cache the charset */
-   sv_magicext(rx_sv, NULL, PERL_MAGIC_ext,
+   sv_magicext(qr_ref, NULL, PERL_MAGIC_ext,
                &secret_buffer_charset_magic_vtbl, (char*)cset, 0);
 
    return cset;

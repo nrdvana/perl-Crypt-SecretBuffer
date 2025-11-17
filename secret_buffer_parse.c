@@ -63,7 +63,7 @@ bool secret_buffer_parse_init(secret_buffer_parse *parse,
  * Regexes are currently limited to a single charclass.
  */
 bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
-   REGEXP *rx= SvRX(pattern);
+   REGEXP *rx= (REGEXP*)SvRX(pattern);
    if (rx) {
       secret_buffer_charset *cset= secret_buffer_charset_from_regexpref(pattern);
       return secret_buffer_match_charset(parse, cset, flags);
