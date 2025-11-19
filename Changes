@@ -1,5 +1,6 @@
   - Fix bug where substr with replacement that shrinks the buffer would leave
     un-wiped bytes at the end of the string.
+  - Fix compile error on some older gcc
   - New methods: splice, append
   - substr, splice, append, and assign now all have special cases for assigning
     a Span of a buffer.

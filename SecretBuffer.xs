@@ -1016,6 +1016,7 @@ scan(self, pattern=NULL, flags= 0)
          if (matched) span->lim= parse.pos - (U8*) buf->data;
          break;
       default:
+         (void)0; // suppress warning that not all values were handled
       }
       if (ret_type == 0) {
          if (!matched)
