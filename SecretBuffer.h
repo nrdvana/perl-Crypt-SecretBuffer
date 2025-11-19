@@ -148,10 +148,23 @@ extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity
  */
 extern void secret_buffer_set_len(secret_buffer *buf, size_t new_len);
 
-/* Overwrite the buffer with the contents of the SV, taking into account
- * whether it might be a scalar-ref, SecretBuffer, or SecretBuffer::Span.
+/* Overwrite a span of the buffer with the supplied bytes.  The buffer length is updated
+ * to match.  Offset and length are unsigned, so they do not support the "negative from end of
+ * buffer" convention common to Perl.
  */
-extern void secret_buffer_assign_sv(secret_buffer *buf, SV *src);
+extern void secret_buffer_splice(secret_buffer *buf, size_t ofs, size_t len,
+   const char *replacement, size_t replacement_len);
+/* Convenience to combine secret_buffer_SvPVbyte with secret_buffer_splice */
+extern void secret_buffer_splice_sv(secret_buffer *buf, size_t ofs, size_t len, SV *replacement);
+
+/* Given an SV, perform SvPVbyte on it, but make special cases for SecretBuffer,
+ * SecretBuffer::Span, or un-blessed scalar-refs.  Note that the return value has all of the
+ * caveats of SvPVbyte (like maybe returning a temporary buffer) and also all the caveats of
+ * returning a pointer into a SecretBuffer, namely that if you alter that SecretBuffer
+ * elsewhere the pointer is no longer valid.  It may even return a pointer to static data.
+ * The string is *NOT* terminated with a NUL byte, and you must pass 'len_out'.
+ */
+extern const char *secret_buffer_SvPVbyte(SV *thing, STRLEN *len_out);
 
 /* Append N bytes of cryptographic quality random bytes to the end of the buffer.
  * This may block if your entropy pool is low.

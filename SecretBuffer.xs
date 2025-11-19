@@ -441,8 +441,9 @@ new(...)
       secret_buffer *buf= secret_buffer_new(0, &buf_ref);
       int i, next_arg= ix == 0? 1 : 0;
    PPCODE:
-      if (items - next_arg == 1)
-         secret_buffer_assign_sv(buf, ST(next_arg));
+      if (items - next_arg == 1) {
+         secret_buffer_splice_sv(buf, 0, 0, ST(next_arg));
+      }
       else {
          if ((items - next_arg) & 1)
             croak("Odd number of arguments; expected (key => value) pairs");
@@ -467,14 +468,13 @@ new(...)
       PUSHs(buf_ref);
 
 void
-assign(buf, source= NULL)
+append(buf, source= NULL)
    auto_secret_buffer buf
    SV *source;
-   INIT:
-      const char *str;
-      STRLEN len;
+   ALIAS:
+      assign = 1
    PPCODE:
-      secret_buffer_assign_sv(buf, source);
+      secret_buffer_splice_sv(buf, ix? 0 : buf->len, ix? buf->len : 0, source);
       XSRETURN(1); /* return self for chaining */
 
 void
@@ -520,7 +520,7 @@ clear(buf)
 
 IV
 index(buf, pattern, ofs_sv= &PL_sv_undef)
-   auto_secret_buffer buf
+   secret_buffer *buf
    SV *pattern
    SV *ofs_sv
    ALIAS:
@@ -563,7 +563,7 @@ index(buf, pattern, ofs_sv= &PL_sv_undef)
 
 void
 scan(buf, pattern, flags= 0, ofs= 0, len_sv= &PL_sv_undef)
-   auto_secret_buffer buf
+   secret_buffer *buf
    SV *pattern
    IV flags
    IV ofs
@@ -587,8 +587,22 @@ scan(buf, pattern, flags= 0, ofs= 0, len_sv= &PL_sv_undef)
       PUSHs(sv_2mortal(newSViv(parse.lim - parse.pos)));
 
 void
+splice(buf, ofs, len, replacement)
+   secret_buffer *buf
+   IV ofs
+   IV len
+   SV *replacement
+   PPCODE:
+      /* normalize negative offset, and clamp to valid range */
+      ofs= normalize_offset(ofs, buf->len);
+      /* normalize negative count, and clamp to valid range */
+      len= normalize_offset(len, buf->len - ofs);
+      secret_buffer_splice_sv(buf, ofs, len, replacement);
+      XSRETURN(1); /* return $self */
+
+void
 substr(buf, ofs, count_sv=NULL, replacement=NULL)
-   auto_secret_buffer buf
+   secret_buffer *buf
    IV ofs
    SV *count_sv
    SV *replacement
@@ -618,31 +632,8 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
             hv_stores((HV*) SvRV(sub_ref), "stringify_mask", newSVsv(*el));
       }
       /* modifying string? */
-      if (replacement) {
-         IV tail_len= buf->len - (ofs + count);
-         IV len_diff;
-         const unsigned char *repl_src;
-         STRLEN repl_len;
-
-         /* Debatable whether I should allow plain SVs here, or force the user to wrap the data
-          * in a secret_buffer first... */
-         if (SvPOK(replacement)) {
-            repl_src= (const unsigned char*) SvPVbyte(replacement, repl_len);
-         } else {
-            secret_buffer *peer= secret_buffer_from_magic(replacement, SECRET_BUFFER_MAGIC_OR_DIE);
-            repl_src= (const unsigned char*) peer->data;
-            repl_len= peer->len;
-         }
-         len_diff= repl_len - count;
-         if (len_diff > 0) /* buffer is growing */
-            secret_buffer_alloc_at_least(buf, buf->len + len_diff);
-         /* copy anything beyond the insertion point to its new location */
-         if (tail_len)
-            Move(sub_start + count, sub_start + repl_len, tail_len, unsigned char);
-         if (repl_len)
-            Copy(repl_src, sub_start, repl_len, unsigned char);
-         buf->len += len_diff;
-      }
+      if (replacement)
+         secret_buffer_splice_sv(buf, ofs, count, replacement);
       /* If void context, return nothing.  Else return the substr */
       if (!sub_ref)
          XSRETURN(0);
@@ -700,7 +691,7 @@ append_console_line(buf, handle)
 
 void
 syswrite(buf, io, count=buf->len, ofs=0)
-   auto_secret_buffer buf
+   secret_buffer *buf
    PerlIO *io
    IV ofs
    IV count
@@ -713,7 +704,7 @@ syswrite(buf, io, count=buf->len, ofs=0)
 
 void
 write_async(buf, io, count=buf->len, ofs=0)
-   auto_secret_buffer buf
+   secret_buffer *buf
    PerlIO *io
    IV ofs
    IV count
@@ -744,7 +735,7 @@ stringify(buf, ...)
 
 void
 unmask_to(buf, coderef)
-   auto_secret_buffer buf
+   secret_buffer *buf
    SV *coderef
    INIT:
       int count= 0;
@@ -929,12 +920,12 @@ pos(span, newval_sv= NULL)
       if (newval_sv) {
          IV newval= SvIV(newval_sv);
          if (newval < 0)
-            croak("pos, lim, and len can not be negative");
+            croak("pos, lim, and len cannot be negative");
          switch (ix) {
          case 0: span->pos= newval; break;
          case 1: if (newval < span->pos) croak("lim must be >= pos");
                  span->lim= newval; break;
-         case 2: span->pos + newval;
+         case 2: span->lim= span->pos + newval;
          default: croak("BUG");
          }
       }

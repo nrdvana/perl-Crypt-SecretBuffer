@@ -323,12 +323,45 @@ and the bytes are initialized with zeroes.
 
 Erases the buffer.  Equivalent to C<< $buf->length(0) >>.  Returns C<$self> for chaining.
 
+=method splice
+
+  $buf->splice($offset, $length, $replacement);
+
+Replace a span of bytes in the buffer with a new value.  C<$offset> and C<$length> may be
+negative to reference backward from the end of the buffer.  The replacement may be another
+C<SecretBuffer>, a L<Span|Crypt::SecretBuffer::Span>, a scalar, a scalar-ref.
+
+Returns C<$self>, for chaining.  If you want to return the replaced span, use C<substr>.
+
 =method assign
 
-  $buf->assign($other_buf); # good
-  $buf->assign($string);    # works, but $string isn't secret...
+  $buf->assign($replacement);
 
-Assign a value to the buffer.  Returns C<$self>, for chaining.
+Alias for C<< $buf->splice(0, $buf->length, $replacemenmt) >>.
+
+=method append
+
+  $buf->append($data)
+
+Alias for C<< $buf->splice($buf->length, 0, $replacemenmt) >>.
+
+=method substr
+
+  $buf->substr(1);            # New SecretBuffer minus the first character
+  $buf->substr(0,5);          # First 5 characters of buffer
+  $buf->substr(0,5,$buf2);    # replace first 5 characters with content of $buf2
+
+This is exactly like Perl's C<substr> function, but it returns
+C<Crypt::SecretBuffer> objects, and they are not an lvalue that alters the
+original.  The offset and length are always bytes.
+
+=method span
+
+  $span= $buf->span($pos= 0, $len= $buf->len, $encoding=undef);
+  $span= $buf->span(pos => $p0, lim => $p1, encoding => UTF8);
+
+Like substr, but returns a L<Crypt::SecretBuffer::Span> which holds a reference back to the
+original SecretBuffer.  The Span object has various methods convenient for parsing.
 
 =attribute stringify_mask
 
@@ -437,24 +470,6 @@ the same encoding >>.
 Note that C<$ofs> and C<$len> are still byte positions, and still suitable for
 L</substr> on the buffer, which is different from Perl's substr on a unicode
 string which works in terms of characters.
-
-=method substr
-
-  $buf->substr(1);            # New SecretBuffer minus the first character
-  $buf->substr(0,5);          # First 5 characters of buffer
-  $buf->substr(0,5,$buf2);    # replace first 5 characters with content of $buf2
-
-This is exactly like Perl's C<substr> function, but it returns
-C<Crypt::SecretBuffer> objects, and they are not an lvalue that alters the
-original.  The offset and length are always bytes.
-
-=method span
-
-  $span= $buf->span($pos= 0, $len= $buf->len, $encoding=undef);
-  $span= $buf->span(pos => $p0, lim => $p1, encoding => UTF8);
-
-Like substr, but returns a L<Crypt::SecretBuffer::Span> which holds a reference back to the
-original SecretBuffer.  The Span object has various methods convenient for parsing.
 
 =method append_random
 
