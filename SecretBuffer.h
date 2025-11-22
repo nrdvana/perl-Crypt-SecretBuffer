@@ -26,7 +26,7 @@ typedef struct secret_buffer_charset secret_buffer_charset;
  * range of characters 0..255 through `s/$patern//g` and building the bitmap
  * from the result.
  */
-extern secret_buffer_charset *secret_buffer_charset_from_regexpref(SV *ref);
+extern secret_buffer_charset * secret_buffer_charset_from_regexpref(SV *ref);
 
 /* Test whether the charset contains an 8-bit byte.
  * This relies solely on the bitmap.
@@ -114,7 +114,7 @@ extern bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_pars
  * ref to a new SV if you want to keep the object.
  * Always returns a secret_buffer, or croaks on failure.
  */
-extern secret_buffer* secret_buffer_new(size_t capacity, SV **ref_out);
+extern secret_buffer * secret_buffer_new(size_t capacity, SV **ref_out);
 
 /* Given a SV which you expect to be a reference to a blessed object with SecretBuffer
  * magic, return the secret_buffer struct pointer.
@@ -128,7 +128,7 @@ extern secret_buffer* secret_buffer_new(size_t capacity, SV **ref_out);
 #define SECRET_BUFFER_MAGIC_AUTOCREATE 1
 #define SECRET_BUFFER_MAGIC_OR_DIE     2
 #define SECRET_BUFFER_MAGIC_UNDEF_OK   4
-extern secret_buffer* secret_buffer_from_magic(SV *ref, int flags);
+extern secret_buffer * secret_buffer_from_magic(SV *ref, int flags);
 
 /* Reallocate (or free) the buffer of secret_buffer, fully erasing it before deallocation.
  * If capacity is zero, the buffer will be freed and 'data' pointer set to NULL.
@@ -164,7 +164,7 @@ extern void secret_buffer_splice_sv(secret_buffer *buf, size_t ofs, size_t len, 
  * elsewhere the pointer is no longer valid.  It may even return a pointer to static data.
  * The string is *NOT* terminated with a NUL byte, and you must pass 'len_out'.
  */
-extern const char *secret_buffer_SvPVbyte(SV *thing, STRLEN *len_out);
+extern const char * secret_buffer_SvPVbyte(SV *thing, STRLEN *len_out);
 
 /* Append N bytes of cryptographic quality random bytes to the end of the buffer.
  * This may block if your entropy pool is low.
@@ -229,14 +229,12 @@ X extern void secret_buffer_result_cancel(SV *promise_ref); */
  * aware of SecretBuffer and can't be fed the secret any other way.  Beware that the secret
  * may "get loose" unintentionally when allowing Perl to read the value as an SV.
  */
-extern SV* secret_buffer_get_stringify_sv(secret_buffer *buf);
+extern SV * secret_buffer_get_stringify_sv(secret_buffer *buf);
 
 /* This is just exposing the wipe function of this library for general use.
  * It will be one of `explicit_bzero`, `SecureZeroMemory`, or just `bzero` which should
  * be fine since it's in an extern function.
  */
 extern void secret_buffer_wipe(char *buf, size_t len);
-
-#include "SecretBufferManualLinkage.h"
 
 #endif /* CRYPT_SECRETBUFFER_H */

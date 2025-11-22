@@ -22,6 +22,7 @@
 #endif
 
 #include "SecretBuffer.h"
+#include "SecretBufferManualLinkage.h"
 
 typedef struct secret_buffer_span {
    size_t pos, lim;
@@ -50,8 +51,8 @@ static inline IV normalize_offset(IV ofs, IV len) {
 }
 
 /* For exported constant dualvars */
-#define EXPORT_ENUM(x) newCONSTSUB(stash, #x, new_enum_dualvar(aTHX_ x, newSVpvs_share(#x)))
-static SV * new_enum_dualvar(pTHX_ IV ival, SV *name) {
+#define EXPORT_ENUM(x) newCONSTSUB(stash, #x, make_enum_dualvar(aTHX_ x, newSVpvs_share(#x)))
+static SV * make_enum_dualvar(pTHX_ IV ival, SV *name) {
    SvUPGRADE(name, SVt_PVNV);
    SvIV_set(name, ival);
    SvIOK_on(name);
@@ -1117,7 +1118,7 @@ copy_to(self, ...)
 BOOT:
    HV *stash= gv_stashpvs("Crypt::SecretBuffer", 1);
 #define EXPORT_CONST(name, const) \
-   newCONSTSUB(stash, name, new_enum_dualvar(aTHX_ const, newSVpvs_share(name)))
+   newCONSTSUB(stash, name, make_enum_dualvar(aTHX_ const, newSVpvs_share(name)))
    EXPORT_CONST("NONBLOCK",      SECRET_BUFFER_NONBLOCK);
    EXPORT_CONST("AT_LEAST",      SECRET_BUFFER_AT_LEAST);
    EXPORT_CONST("MATCH_MULTI",   SECRET_BUFFER_MATCH_MULTI);
@@ -1127,7 +1128,7 @@ BOOT:
    SV *enc[SECRET_BUFFER_ENCODING_MAX+1];
    memset(enc, 0, sizeof(enc));
 #define EXPORT_ENCODING(name, str, const) \
-   newCONSTSUB(stash, name, (enc[const]= new_enum_dualvar(aTHX_ const, newSVpvs_share(str))))
+   newCONSTSUB(stash, name, (enc[const]= make_enum_dualvar(aTHX_ const, newSVpvs_share(str))))
    EXPORT_ENCODING("ASCII",    "ASCII",      SECRET_BUFFER_ENCODING_ASCII);
    EXPORT_ENCODING("ISO8859_1","ISO-8859-1", SECRET_BUFFER_ENCODING_ISO8859_1);
    EXPORT_ENCODING("UTF8",     "UTF-8",      SECRET_BUFFER_ENCODING_UTF8);

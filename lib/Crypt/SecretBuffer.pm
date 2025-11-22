@@ -117,29 +117,19 @@ but don't want your module to depend on Crypt::SecretBuffer, here are some usefu
 
 =item In C code, conditionally access the SecretBuffer C API
 
-  typedef struct {
-    char *data;
-    size_t len, capacity;
-    SV *stringify_sv;
-  } secret_buffer;
-  typedef secret_buffer* sb_from_magic_t(SV *ref, int flags);
-  
+(secret_buffer_SvPVbyte is a handy function that gives you a pointer to the
+buffer, and even handles Span objects for you, and works like SvPVbyte even on
+things that are not SecretBuffer objects)
+
+  typedef const char * (*sb_SvPVbyte_p)(SV *, STRLEN *);
   ...
-     const char *actual_pass= NULL;
-     STRLEN actual_pass_len;
-  
-     HV *secretbuffer_api = get_hv("Crypt::SecretBuffer::C_API", 0);
-     if (secretbuffer_api) { /* only becomes true after 'use Crypt::SecretBuffer;' */
-       SV **svp = hv_fetchs(secretbuffer_api, "secret_buffer_from_magic", 0);
-       sb_from_magic_t *sb_from_magic= svp && *svp? (sb_from_magic_t*) SvIV(*svp) : NULL;
-       secret_buffer *buf;
-       if (sb_from_magic && (buf= sb_from_magic(password, 0))) {
-         actual_pass= buf->data;
-         actual_pass_len= buf->len;
-       }
-     }
-     if (!actual_pass)
-       actual_pass= SvPV(password, actual_pass_len);
+  const char *actual_pass= NULL;
+  STRLEN actual_pass_len;
+  SV *sv= get_sv("Crypt::SecretBuffer::C_API::const char * secret_buffer_SvPVbyte(SV *, STRLEN *)", 0);
+  if (sv)
+    actual_pass= ((sb_SvPVbyte_p)SvIV(sv))(password, &actual_pass_len);
+  else
+    actual_pass= SvPV(password, &actual_pass_len);
   ...
 
 =back
