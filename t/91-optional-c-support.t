@@ -62,7 +62,7 @@ SV* return_secret_via_sbSvPV(SV *password) {
       const char *str= ((sb_SvPVbyte_p)SvIV(sv))(password, &len);
       return newSVpvn(str, len);
    }
-   return "";
+   return &PL_sv_undef;
 }
 
 END_C
