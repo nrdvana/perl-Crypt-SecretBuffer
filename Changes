@@ -1,4 +1,4 @@
-Version 0.009 - 2025-11-22
+Version 0.010 - 2025-11-22
   - Fix bug where substr with replacement that shrinks the buffer would leave
     un-wiped bytes at the end of the string.
   - Fix compile error on BSD, possibly others
