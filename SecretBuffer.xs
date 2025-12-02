@@ -766,6 +766,8 @@ _count_matches_in_mem(buf, addr0, addr1)
       if (!buf->len)
          croak("Empty buffer");
       RETVAL= scan_mapped_memory_in_range(addr0, addr1, buf->data, buf->len);
+      if (RETVAL < 0)
+         croak("Unimplemented");
    OUTPUT:
       RETVAL
 
