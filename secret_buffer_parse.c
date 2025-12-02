@@ -90,7 +90,7 @@ bool secret_buffer_match_charset(secret_buffer_parse *parse, secret_buffer_chars
  * by parse_state->encoding.
  */
 bool secret_buffer_match_bytestr(secret_buffer_parse *parse, char *data, size_t datalen, int flags) {
-   return sb_parse_match_bytestr(parse, data, datalen, flags);
+   return sb_parse_match_bytestr(parse, (U8*) data, datalen, flags);
 }
 
 /* Count number of bytes required to transcode the source.
