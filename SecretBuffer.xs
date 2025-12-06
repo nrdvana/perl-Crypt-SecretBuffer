@@ -739,22 +739,13 @@ unmask_to(buf, coderef)
    SV *coderef
    INIT:
       int count= 0;
-      SV *init_errsv= NULL;
-      if (SvROK(ERRSV) || SvTRUE(ERRSV)) {
-         init_errsv= sv_newmortal();
-         sv_setsv(init_errsv, ERRSV);
-      }
    PPCODE:
       PUSHMARK(SP);
       EXTEND(SP, 1);
       PUSHs(secret_buffer_get_stringify_sv(buf));
       PUTBACK;
-      count= call_sv(coderef, G_EVAL|GIMME_V);
+      count= call_sv(coderef, GIMME_V);
       SPAGAIN;
-      if (SvROK(ERRSV) || SvTRUE(ERRSV))
-         croak_sv(ERRSV);
-      if (init_errsv)
-         sv_setsv(ERRSV, init_errsv);
       XSRETURN(count);
 
 bool
@@ -786,11 +777,6 @@ unmask_secrets_to(coderef, ...)
    INIT:
       int count= 0, i;
       secret_buffer *buf= NULL;
-      SV *init_errsv= NULL;
-      if (SvROK(ERRSV) || SvTRUE(ERRSV)) {
-         init_errsv= sv_newmortal();
-         sv_setsv(init_errsv, ERRSV);
-      }
    PPCODE:
       PUSHMARK(SP);
       EXTEND(SP, items);
@@ -801,12 +787,8 @@ unmask_secrets_to(coderef, ...)
             PUSHs(ST(i));
       }
       PUTBACK;
-      count= call_sv(coderef, G_EVAL|GIMME_V);
+      count= call_sv(coderef, GIMME_V);
       SPAGAIN;
-      if (SvROK(ERRSV) || SvTRUE(ERRSV))
-         croak_sv(ERRSV);
-      if (init_errsv)
-         sv_setsv(ERRSV, init_errsv);
       XSRETURN(count);
 
 void
