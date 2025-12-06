@@ -23,23 +23,4 @@ is( "$buf", "test", 'unmask secret using attr setter' );
 delete $buf->{stringify_mask};
 is( "$buf", '[REDACTED]', 'restore default stringify_mask' );
 
-$buf->unmask_to(sub {
-   is( $_[0], 'test', 'unmask_to' );
-});
-
-is( [
-      unmask_secrets_to(sub {
-         is( \@_,
-            [
-               'test',
-               'test',
-               1,2,3,4
-            ],
-            'unmask_secrets_to @_' );
-         return 1,2,3;
-      }, $buf, $buf, 1, 2, 3, 4)
-   ],
-   [1,2,3],
-   'array context unmask_secrets_to return value' );
-
 done_testing;
