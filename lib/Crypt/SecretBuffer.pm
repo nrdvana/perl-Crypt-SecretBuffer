@@ -168,10 +168,11 @@ Shorthand function for calling L</new>.
 
 =item unmask_secrets_to
 
-  unmask_secrets_to \&coderef, $arg1, $arg2, ...;
+  @ret= unmask_secrets_to \&coderef, $arg1, $arg2, ...;
 
 Call a coderef with a list of arguments, and any argument which is a SecretBuffer will be
-replaced by a scalar referencing the actual secret.
+replaced by a scalar referencing the actual secret.  The return values are passed through,
+as well as the C<wantarray> context.
 
 =back
 
@@ -393,20 +394,15 @@ the scope of this exposure.
 
 =method unmask_to
 
-  $buf->unmask_to(\&coderef);
+  @ret= $buf->unmask_to(sub{
+    # use $_[0]
+  });
 
-Pass the secret value as an argument to a code-ref.  If you want to prevent the secret from
-leaking into perl's heap, the coderef should be an XS function.  If you pass it to a perl
-function and load the parameter into a local variable, then it leaks into perl's heap.
-You *might* be OK if you pass it to a perl function and leave it in C<< @_ >> until passing it
-to an XS function.
+Pass the secret value as an argument to a code-ref, and propagate the return value.
+(C<wantarray> is propagated to the coderef).
 
-This is equivalent to, but more efficient than
-
-  {
-    local $buf->{stringify_mask}= undef;
-    coderef->($buf);
-  }
+If you want to prevent the secret from leaking into perl's heap, the coderef should be an XS
+function, or strictly use C<< $_[0] >> without copying it to a 'my' variable.
 
 See also: L</unmask_secrets_to>.
 
@@ -659,6 +655,17 @@ You can also just use it with L<Inline::C> if you want to skip the hassle of an 
   
   print test(Crypt::SecretBuffer->new(length => 10))."\n";
   1;
+
+You can also look up individual functions at runtime to avoid depending on SecretBuffer being
+installed.  Every function pointer is stored by name in C<< %Crypt::SecretBuffer::C_API >>
+and also individually by their full prototype in global SVs for convenient and reliable access:
+
+  typedef const char * (*sb_SvPVbyte_p)(SV *, STRLEN *);
+  SV *sv= get_sv("Crypt::SecretBuffer::C_API::const char * secret_buffer_SvPVbyte(SV *, STRLEN *)", 0);
+  if (sv) {
+    sb_SvPVbyte_p sb_SvPVbyte= (sb_SvPVbyte_p) SvIV(sv);
+    ...
+  }
 
 The complete API documentation is found in
 L<SecretBuffer.h|https://metacpan.org/dist/Crypt-SecretBuffer/source/SecretBuffer.h>
