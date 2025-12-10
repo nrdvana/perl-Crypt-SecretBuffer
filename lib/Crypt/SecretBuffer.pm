@@ -141,7 +141,8 @@ use warnings;
 use Carp;
 use Scalar::Util ();
 use parent qw( DynaLoader );
-use overload '""' => \&stringify;
+use overload '""' => \&stringify,
+             'cmp' => \&memcmp;
 
 sub dl_load_flags {0x01} # Share extern symbols with other modules
 bootstrap Crypt::SecretBuffer;
@@ -173,6 +174,13 @@ Shorthand function for calling L</new>.
 Call a coderef with a list of arguments, and any argument which is a SecretBuffer will be
 replaced by a scalar referencing the actual secret.  The return values are passed through,
 as well as the C<wantarray> context.
+
+=item memcmp
+
+  $cmp= memcmp($thing1, $thing2);
+
+This function always compares bytes, and the arguments can be L<SecretBuffer|Crypt::SecretBuffer>
+objects, L<Span|Crypt::SecretBuffer::Span> objects, scalar-refs, and scalars.
 
 =back
 
@@ -245,7 +253,7 @@ Require the match begin at the start of the specified span of the buffer.
 
    use Exporter 'import';
    @Crypt::SecretBuffer::Exports::EXPORT_OK= qw(
-      secret_buffer secret unmask_secrets_to
+      secret_buffer secret unmask_secrets_to memcmp
       NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX
       MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED
    );
@@ -456,6 +464,12 @@ the same encoding >>.
 Note that C<$ofs> and C<$len> are still byte positions, and still suitable for
 L</substr> on the buffer, which is different from Perl's substr on a unicode
 string which works in terms of characters.
+
+=method memcmp
+
+  $cmp= $buf->memcmp($buf2);
+
+Like the 'cmp' operator, but always compares on a byte-by-byte basis.
 
 =method append_random
 

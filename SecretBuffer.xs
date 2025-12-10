@@ -642,6 +642,27 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
          XSRETURN(1);
       }
 
+IV
+memcmp(lhs, rhs, reverse=false)
+   SV *lhs
+   SV *rhs
+   bool reverse
+   ALIAS:
+      Crypt::SecretBuffer::Span::memcmp = 1
+      Crypt::SecretBuffer::Exports::memcmp = 2
+   INIT:
+      STRLEN lhs_len, rhs_len;
+      const char *lhs_buf= secret_buffer_SvPVbyte(lhs, &lhs_len);
+      const char *rhs_buf= secret_buffer_SvPVbyte(rhs, &rhs_len);
+   CODE:
+      RETVAL= memcmp(lhs_buf, rhs_buf, (lhs_len < rhs_len? lhs_len : rhs_len));
+      if (RETVAL == 0 && lhs_len != rhs_len)
+         RETVAL= lhs_len < rhs_len? -1 : 1;
+      if (reverse)
+         RETVAL= -RETVAL;
+   OUTPUT:
+      RETVAL
+
 UV
 append_random(buf, count, flags=0)
    auto_secret_buffer buf
