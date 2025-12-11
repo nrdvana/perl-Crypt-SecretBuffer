@@ -1003,6 +1003,8 @@ scan(self, pattern=NULL, flags= 0)
       //   1 == return bool
       //   2 == return self
       int ret_type= (ix >> 4) & 0xF;
+      if (ret_type != 1 && parse.encoding == SECRET_BUFFER_ENCODING_BASE64)
+         croak("Cannot perform parse, trim, or scan on base64 (pos / lim of result would not be whole bytes)");
       int op= (ix >> 8);
       bool matched;
       if (!pattern) {
@@ -1153,6 +1155,7 @@ BOOT:
    EXPORT_ENCODING("UTF16LE",  "UTF-16LE",   SECRET_BUFFER_ENCODING_UTF16LE);
    EXPORT_ENCODING("UTF16BE",  "UTF-16BE",   SECRET_BUFFER_ENCODING_UTF16BE);
    EXPORT_ENCODING("HEX",      "HEX",        SECRET_BUFFER_ENCODING_HEX);
+   EXPORT_ENCODING("BASE64",   "BASE64",     SECRET_BUFFER_ENCODING_BASE64);
 #undef EXPORT_ENCODING
    // Set up an array of _encodings so that the accessor can return an existing SV
    AV *encodings= get_av("Crypt::SecretBuffer::_encodings", GV_ADD);

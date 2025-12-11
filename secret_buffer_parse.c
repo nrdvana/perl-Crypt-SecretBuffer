@@ -27,6 +27,7 @@ static bool parse_encoding(SV *sv, int *out) {
       case  4: if (0 == strcmp(str, "UTF8"))       { enc= SECRET_BUFFER_ENCODING_UTF8;      break; }
       case  5: if (0 == strcmp(str, "ASCII"))      { enc= SECRET_BUFFER_ENCODING_ASCII;     break; }
                if (0 == strcmp(str, "UTF-8"))      { enc= SECRET_BUFFER_ENCODING_UTF8;      break; }
+      case  6: if (0 == strcmp(str, "BASE64"))     { enc= SECRET_BUFFER_ENCODING_BASE64;    break; }
       case  7: if (0 == strcmp(str, "UTF16LE"))    { enc= SECRET_BUFFER_ENCODING_UTF16LE;   break; }
                if (0 == strcmp(str, "UTF16BE"))    { enc= SECRET_BUFFER_ENCODING_UTF16BE;   break; }
       case  8: if (0 == strcmp(str, "UTF-16LE"))   { enc= SECRET_BUFFER_ENCODING_UTF16LE;   break; }
@@ -105,18 +106,60 @@ SSize_t secret_buffer_sizeof_transcode(secret_buffer_parse *src, int dst_encodin
    // Else need to iterate characters (to validate) and re-encode them
    else {
       size_t dst_size_needed= 0;
-      U8 *orig_pos= src->pos;
-      while (src->pos < src->lim) {
-         int cp= sb_parse_next_codepoint(src);
+      secret_buffer_parse tmp;
+      Zero(&tmp, 1, secret_buffer_parse);
+      tmp.pos= src->pos;
+      tmp.lim= src->lim;
+      tmp.encoding= src->encoding;
+      while (tmp.pos < tmp.lim) {
+         int cp= sb_parse_next_codepoint(&tmp);
          if (cp < 0) return -1;
          int ch_size= sizeof_codepoint_encoding(cp, dst_encoding);
          if (ch_size < 0) return -1;
          dst_size_needed += ch_size;
       }
-      src->pos= orig_pos;
+      // If dest is base64, need special calculation
+      if (dst_encoding == SECRET_BUFFER_ENCODING_BASE64) {
+         dst_size_needed= ((dst_size_needed + 2) / 3) * 4;
+      }
       return dst_size_needed;
    }
 }
+
+static const char base64_alphabet[64]=
+   "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+   "abcdefghijklmnopqrstuvwxyz"
+   "0123456789+/";
+
+static const int8_t base64_decode_table[256]= {
+   [0 ... 255] = -1,
+   /* A–Z = 0–25 */
+   ['A'] = 0,  ['B'] = 1,  ['C'] = 2,  ['D'] = 3,
+   ['E'] = 4,  ['F'] = 5,  ['G'] = 6,  ['H'] = 7,
+   ['I'] = 8,  ['J'] = 9,  ['K'] = 10, ['L'] = 11,
+   ['M'] = 12, ['N'] = 13, ['O'] = 14, ['P'] = 15,
+   ['Q'] = 16, ['R'] = 17, ['S'] = 18, ['T'] = 19,
+   ['U'] = 20, ['V'] = 21, ['W'] = 22, ['X'] = 23,
+   ['Y'] = 24, ['Z'] = 25,
+   /* a–z = 26–51 */
+   ['a'] = 26, ['b'] = 27, ['c'] = 28, ['d'] = 29,
+   ['e'] = 30, ['f'] = 31, ['g'] = 32, ['h'] = 33,
+   ['i'] = 34, ['j'] = 35, ['k'] = 36, ['l'] = 37,
+   ['m'] = 38, ['n'] = 39, ['o'] = 40, ['p'] = 41,
+   ['q'] = 42, ['r'] = 43, ['s'] = 44, ['t'] = 45,
+   ['u'] = 46, ['v'] = 47, ['w'] = 48, ['x'] = 49,
+   ['y'] = 50, ['z'] = 51,
+   /* 0–9 = 52–61 */
+   ['0'] = 52, ['1'] = 53, ['2'] = 54, ['3'] = 55,
+   ['4'] = 56, ['5'] = 57, ['6'] = 58, ['7'] = 59,
+   ['8'] = 60, ['9'] = 61,
+
+   /* + and / */
+   ['+'] = 62, ['/'] = 63,
+   /* = flushes out the remaining bits */
+   ['='] = 64
+};
+
 
 /* Transcode characters from one parse state into another.
  * This works sort of like
@@ -141,6 +184,48 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse *dst)
       src->pos += cnt;
    }
    // Else need to iterate characters and re-encode them
+   // base64 encoding doesn't work with sb_parse_encode_codepoint, so it gets
+   // special treatment.
+   else if (dst->encoding == SECRET_BUFFER_ENCODING_BASE64) {
+      // Read 3, write 4
+      int accum= 0;
+      int shift= 16, cp;
+      while (src->pos < src->lim) {
+         cp= sb_parse_next_codepoint(src);
+         if (cp > 0xFF) {
+            dst->error= "byte out of range";
+            return false;
+         }
+         if (!shift) {
+            if (dst->pos + 4 > dst->lim) {
+               dst->error= "miscalculated buffer length";
+               return false;
+            }
+            accum |= cp;
+            *dst->pos++ = base64_alphabet[0x3F & (accum >> 18)];
+            *dst->pos++ = base64_alphabet[0x3F & (accum >> 12)];
+            *dst->pos++ = base64_alphabet[0x3F & (accum >> 6)];
+            *dst->pos++ = base64_alphabet[0x3F & accum];
+            accum= 0;
+            shift= 16;
+         }
+         else {
+            accum |= (cp << shift);
+            shift -= 8;
+         }
+      }
+      if (dst->pos + (shift < 16? 4 : 0) != dst->lim) {
+         dst->error= "miscalculated buffer length";
+         return false;
+      }
+      // write leftover accumulated bits
+      if (shift < 16) {
+         *dst->pos++ = base64_alphabet[0x3F & (accum >> 18)];
+         *dst->pos++ = base64_alphabet[0x3F & (accum >> 12)];
+         *dst->pos++ = shift? '=' : base64_alphabet[0x3F & (accum >> 6)];
+         *dst->pos++ = '=';
+      }
+   }
    else {
       while (src->pos < src->lim) {
          int cp= sb_parse_next_codepoint(src);
@@ -261,7 +346,7 @@ static bool sb_parse_match_charset_codepoints(
 
 /* UTF-8 decoding helper */
 static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
-   U8 *pos= parse->pos, *lim= parse->lim;
+   U8 *pos= parse->pos, *lim= parse->lim, *next;
    int cp, encoding= parse->encoding;
    #define SB_RETURN_ERROR(msg) { parse->error= msg; return -1; }
 
@@ -345,8 +430,53 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
       if ((low >> 4) | (high >> 4))
          SB_RETURN_ERROR("not a pair of hex digits")
       cp= (high << 4) | low;
+      // skip over whitespace if it takes us to the end of buffer so that caller
+      // knows it's EOF before trying another decode.
+      while (pos < lim && isspace(*pos))
+         pos++;
    }
-   else SB_RETURN_ERROR("unknown encoding")
+   else if (encoding == SECRET_BUFFER_ENCODING_BASE64) {
+      // Skip over whitespace and control chars
+      while (pos < lim && *pos <= ' ')
+         pos++;
+      // There need to be at least 2 base64 characters left
+      if (pos < lim) {
+         if (base64_decode_table[*pos] < 0)
+            SB_RETURN_ERROR("invalid base64 character");
+         // ->pos_bit > 0 means pointer is pointing at a sub-bit of the base64
+         // character at *pos (and possible values are 0, 2, or 4)
+         cp= (((int)base64_decode_table[*pos++]) << (2 + parse->pos_bit)) & 0xFF;
+         while (pos < lim && *pos <= ' ')
+            pos++;
+      }
+      if (pos >= lim) {
+         parse->pos_bit= 0;
+         SB_RETURN_ERROR("end of span")
+      }
+      if (base64_decode_table[*pos] < 0)
+         SB_RETURN_ERROR("invalid base64 character");
+      cp |= base64_decode_table[*pos] >> (4-parse->pos_bit);
+      parse->pos_bit += 2;
+      // If pos_bit == 6 we've completed a set of 4 b64 chars and fully consumed them.
+      if (parse->pos_bit >= 6) {
+         pos++;
+         parse->pos_bit= 0;
+         // consume trailing whitespace
+         while (pos < lim && *pos <= ' ')
+            pos++;
+      }
+      else {
+         // if next char is '=', terminate the decoding
+         U8 *next= pos+1;
+         while (next < lim && *next <= ' ')
+            next++;
+         if (next < lim && *next == '=') {
+            pos= lim; // indicate parsing complete
+            parse->pos_bit= 0;
+         }
+      }
+   }
+   else SB_RETURN_ERROR("unsupported encoding")
    parse->pos= pos;
    return cp;
    #undef SB_RETURN_ERROR
@@ -422,7 +552,49 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse) {
          SB_RETURN_ERROR("not a pair of hex digits")
       cp= (high << 4) | low;
    }
-   else SB_RETURN_ERROR("unknown encoding")
+   else if (encoding == SECRET_BUFFER_ENCODING_BASE64) {
+      bool again;
+      do {
+         again= false;
+         // Skip over non-base64 chars
+         while (pos < lim && base64_decode_table[lim[-1]] < 0)
+            lim--;
+         if (pos < lim) {
+            warn("lim-pos=%d, lim[-1]=%c, lim_bit=%d", (int)(lim-pos), lim[-1], parse->lim_bit);
+            if (base64_decode_table[lim[-1]] < 0)
+               SB_RETURN_ERROR("invalid base64 character");
+            // ->lim_bit > 0 means the character lim[-1] is partially consumed.
+            // (sequence is 0, 2, 4, 0)
+            cp= ((int)base64_decode_table[lim[-1]]) >> parse->lim_bit;
+            // parsing an equal sign means 'cp' is bogus and need to go again
+            if (lim[-1] == '=')
+               again= true;
+            --lim;
+            // find next base64 char
+            while (pos < lim && base64_decode_table[lim[-1]] < 0)
+               lim--;
+         }
+         if (pos >= lim) {
+            parse->lim_bit= 0;
+            SB_RETURN_ERROR("end of span")
+         }
+         if (base64_decode_table[lim[-1]] < 0)
+            SB_RETURN_ERROR("invalid base64 character");
+         warn(" lim-pos=%d, lim[-1]=%c, lim_bit=%d", (int)(lim-pos), lim[-1], parse->lim_bit);
+         cp |= (((int)base64_decode_table[lim[-1]]) << (6 - parse->lim_bit)) & 0xFF;
+         parse->lim_bit += 2;
+         if (parse->lim_bit >= 6) {
+            parse->lim_bit= 0;
+            // If completed a set of 4 b64 chars, lim[-1] is consumed, and need to
+            // walk backward to find next base64 char
+            --lim;
+            while (pos < lim && base64_decode_table[lim[-1]] < 0)
+               lim--;
+         }
+         warn(" cp=%d, lim-pos=%d, lim_bit=%d", cp, (int)(lim-pos), parse->lim_bit);
+      } while (again);
+   }
+   else SB_RETURN_ERROR("unsupported encoding")
    parse->lim= lim;
    return cp;
    #undef SB_RETURN_ERROR
@@ -441,6 +613,9 @@ static int sizeof_codepoint_encoding(int codepoint, int encoding) {
            : codepoint < 0x10000? 2 : 4;
    else if (encoding == SECRET_BUFFER_ENCODING_HEX)
       return codepoint < 0x100? 2 : -1;
+   /* Base64 would need to track an accumulator, so just return 1 and fix it in the caller */
+   else if (encoding == SECRET_BUFFER_ENCODING_BASE64)
+      return codepoint < 0x100? 1 : -1;
    else
       return -1;
 }
@@ -503,6 +678,9 @@ static bool sb_parse_encode_codepoint(secret_buffer_parse *dst, int codepoint) {
       *dst->pos++ = "0123456789ABCDEF"[(codepoint >> 4) & 0xF];
       *dst->pos++ = "0123456789ABCDEF"[codepoint & 0xF];
    }
+   /* BASE64 is not handled here because the '=' padding can only be generated in
+    * a context that knows when we are ending on a non-multiple-of-4. */
+   else SB_RETURN_ERROR("unsupported encoding");
    return true;
    #undef SB_RETURN_ERROR
 }

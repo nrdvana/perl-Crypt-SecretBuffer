@@ -2,7 +2,9 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
 use Encode qw( encode decode );
-use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 UTF16LE UTF16BE HEX MATCH_NEGATE MATCH_MULTI );
+use MIME::Base64;
+use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 UTF16LE UTF16BE HEX BASE64
+  MATCH_NEGATE MATCH_MULTI );
 
 subtest constructors => sub {
    my $buf= secret("abcdef");
@@ -151,6 +153,12 @@ subtest ends_with => sub {
    # This tests the reverse decoding of various encodings
    $s= $s->buf;
    ok( $s->span(encoding => HEX)->ends_with(qr/[\xEF]/), 'parse hex in reverse' );
+   $s= secret(encode_base64("A"));
+   ok( $s->span(encoding => BASE64)->ends_with(qr/[A]/), 'parse base64 in reverse' );
+   $s= secret(encode_base64("AB"));
+   ok( $s->span(encoding => BASE64)->ends_with(qr/[B]/), 'parse base64 in reverse' );
+   $s= secret(encode_base64("ABC"));
+   ok( $s->span(encoding => BASE64)->ends_with(qr/[C]/), 'parse base64 in reverse' );
    $s= secret(encode('UTF-8', "123\x{123}"));
    ok( $s->span(encoding => UTF8)->ends_with(qr/[\x{123}]/), 'parse utf8 2-byte in reverse' );
    $s= secret(encode('UTF-8', "123\x{1234}"));
@@ -278,6 +286,17 @@ subtest copy_hex => sub {
          call length => 3;
       },
       'convert from hex' );
+};
+
+subtest copy_base64 => sub {
+   for my $str (qw( 123 three_times4 remainder1 remainder_2 )) {
+      my $b64= encode_base64($str, '');
+      my $tmp;
+      secret($str)->span->copy_to($tmp, encoding => BASE64);
+      is( $tmp, $b64, "encode $str" );
+      secret($b64)->span(encoding => BASE64)->copy_to($tmp, encoding => ISO8859_1);
+      is( $tmp, $str, "decode $b64" );
+   }
 };
 
 done_testing;

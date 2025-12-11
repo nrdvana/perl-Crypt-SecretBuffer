@@ -254,7 +254,7 @@ Require the match begin at the start of the specified span of the buffer.
    use Exporter 'import';
    @Crypt::SecretBuffer::Exports::EXPORT_OK= qw(
       secret_buffer secret unmask_secrets_to memcmp
-      NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX
+      NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX BASE64
       MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED
    );
    *NONBLOCK=       *Crypt::SecretBuffer::NONBLOCK;
@@ -265,6 +265,7 @@ Require the match begin at the start of the specified span of the buffer.
    *UTF16LE=        *Crypt::SecretBuffer::UTF16LE;
    *UTF16BE=        *Crypt::SecretBuffer::UTF16BE;
    *HEX=            *Crypt::SecretBuffer::HEX;
+   *BASE64=         *Crypt::SecretBuffer::BASE64;
    *MATCH_MULTI=    *Crypt::SecretBuffer::MATCH_MULTI;
    *MATCH_REVERSE=  *Crypt::SecretBuffer::MATCH_REVERSE;
    *MATCH_NEGATE=   *Crypt::SecretBuffer::MATCH_NEGATE;
