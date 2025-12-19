@@ -455,16 +455,12 @@ start with '[' and must end with either ']' or '+'.
 
 The C<$flags> may be a bitwise OR of the L</Match Flags> and one
 L<Character Encoding|/Character Encodings>.
-If your pattern is a plain string (not regexp), B<< you must encode it with
-the same encoding >>.
-
-  my $str= "\x{100}";
-  utf8::encode($str);
-  my ($ofs, $len)= $buf->scan($str, UTF8);
-
 Note that C<$ofs> and C<$len> are still byte positions, and still suitable for
 L</substr> on the buffer, which is different from Perl's substr on a unicode
 string which works in terms of characters.
+
+For a more convenient interface to this method, use L</span> to create a
+L<Span object|Crypt::SecretBuffer::Span> and then call its methods.
 
 =method memcmp
 

@@ -10,7 +10,8 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse);
 static bool sb_parse_encode_codepoint(secret_buffer_parse *parse, int codepoint);
 static bool sb_parse_match_charset_bytes(secret_buffer_parse *parse, const secret_buffer_charset *cset, int flags);
 static bool sb_parse_match_charset_codepoints(secret_buffer_parse *parse, const secret_buffer_charset *cset, int flags);
-static bool sb_parse_match_bytestr(secret_buffer_parse *parse, const U8 *bytestr, size_t bytestr_len, int flags);
+static bool sb_parse_match_str_U8(secret_buffer_parse *parse, const U8 *pattern, int pattern_len, int flags);
+static bool sb_parse_match_str_I32(secret_buffer_parse *parse, const I32 *pattern, int pattern_len, int flags);
 
 static bool parse_encoding(SV *sv, int *out) {
    int enc;
@@ -70,8 +71,24 @@ bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
       return secret_buffer_match_charset(parse, cset, flags);
    } else {
       STRLEN len;
-      U8 *str= (U8*) SvPVbyte(pattern, len);
-      return secret_buffer_match_bytestr(parse, str, len, flags);
+      U8 *str= (U8*) SvPV(pattern, len);
+      if (SvUTF8(pattern)) {
+         /* unpack the UTF8 codepoints into I32 array.  Just in case they are a
+          * secret, use a SecretBuffer instead of a plain malloc.
+          */
+         secret_buffer *sb= secret_buffer_new(len * 4, NULL); /* mortal, cleans itself up */
+         STRLEN step, i= 0;
+         U8 *lim= str + len;
+         while (str < lim) {
+            ((I32*)sb->data)[i++]= utf8_to_uvchr_buf(str, lim, &step);
+            if (step <= 0)
+               croak("Malformed utf8 character");
+            str += step;
+         }
+         secret_buffer_set_len(sb, i * 4);
+         return sb_parse_match_str_I32(parse, (I32*) sb->data, i, flags);
+      }
+      return sb_parse_match_str_U8(parse, str, len, flags);
    }
 }
 
@@ -87,11 +104,9 @@ bool secret_buffer_match_charset(secret_buffer_parse *parse, secret_buffer_chars
 }
 
 /* Scan for a pattern which is a literal string of bytes.
- * The caller is responsible for encoding them in the same format as requested
- * by parse_state->encoding.
  */
 bool secret_buffer_match_bytestr(secret_buffer_parse *parse, char *data, size_t datalen, int flags) {
-   return sb_parse_match_bytestr(parse, (U8*) data, datalen, flags);
+   return sb_parse_match_str_U8(parse, (U8*) data, datalen, flags);
 }
 
 /* Count number of bytes required to transcode the source.
@@ -685,92 +700,14 @@ static bool sb_parse_encode_codepoint(secret_buffer_parse *dst, int codepoint) {
    #undef SB_RETURN_ERROR
 }
 
-bool sb_parse_match_bytestr(secret_buffer_parse *parse, const U8 *pattern, size_t pattern_len, int flags) {
-   bool reverse=  0 != (flags & SECRET_BUFFER_MATCH_REVERSE);
-   bool multi=    0 != (flags & SECRET_BUFFER_MATCH_MULTI);
-   bool anchored= 0 != (flags & SECRET_BUFFER_MATCH_ANCHORED);
-   bool negate=   0 != (flags & SECRET_BUFFER_MATCH_NEGATE);
+#define SB_PARSE_MATCH_STR_FN sb_parse_match_str_U8
+#define SB_PATTERN_EL_TYPE const U8
+#include "secret_buffer_parse_match_str.c"
+#undef SB_PARSE_MATCH_STR_FN
+#undef SB_PATTERN_EL_TYPE
 
-   if (reverse) {
-      U8 *orig_lim= parse->lim;
-      // back up by whole characters until there are at least pattern_len bytes from the current
-      // character until the original limit
-      while (parse->lim > orig_lim - pattern_len) {
-         if (parse->lim <= parse->pos)
-            return false;
-         if (sb_parse_prev_codepoint(parse) < 0)
-            return false; // encoding error
-      }
-      // from here forward, ->lim is acting like a 'pos' and is safe for a memcmp of pattern_len bytes
-      while (1) {
-         if ((0 == memcmp(parse->lim, pattern, pattern_len)) != negate) {
-            // Found.
-            U8 *match_pos= parse->lim;
-            U8 *match_lim= parse->lim + pattern_len;
-            // Are we looking for a span of matches?
-            if (multi) {
-               while (1) {
-                  // In the negate condition, need to step by whole characters.
-                  // Else need to step by whole matches of the pattern.
-                  if (!negate) 
-                     parse->lim -= pattern_len;
-                  else if (sb_parse_prev_codepoint(parse) < 0)
-                     break; // encoding error
-                  if (parse->lim < parse->pos) break;
-                  if ((0 == memcmp(parse->lim, pattern, pattern_len)) == negate) {
-                     // in the negate case, need to move match_pos to the end of the match.
-                     if (negate && pattern_len > 1)
-                        match_pos= parse->lim + pattern_len;
-                     break;
-                  }
-                  // still matching (or not matching)
-                  match_pos= parse->lim;
-               }
-            }
-            parse->pos= match_pos;
-            parse->lim= match_lim;
-            return true;
-         }
-         else if (anchored)
-            break;
-         // step backward one character.  prev_codepoint will fail if there isn't a char available
-         if (parse->lim <= parse->pos)
-            break;
-         if (sb_parse_prev_codepoint(parse) < 0)
-            break; // encoding error
-      }
-   } else { // forward
-      U8 *pmax= parse->lim - pattern_len;
-      while (parse->pos <= pmax) {
-         if ((0 == memcmp(parse->pos, pattern, pattern_len)) != negate) {
-            // Found
-            U8 *match_pos= parse->pos;
-            U8 *match_lim= parse->pos + pattern_len;
-            // Are we looking for a span of matches?
-            if (multi) {
-               while (1) {
-                  // In the negate condition, need to step by whole characters.
-                  // Else need to step by whole matches of the pattern.
-                  if (!negate)
-                     parse->pos += pattern_len;
-                  else if (sb_parse_next_codepoint(parse) < 0)
-                     break; // encoding error
-                  if (parse->pos > pmax
-                     || (0 == memcmp(parse->pos, pattern, pattern_len)) == negate)
-                     break;
-                  match_lim= parse->pos + pattern_len;
-               }
-            }
-            parse->pos= match_pos;
-            parse->lim= match_lim;
-            return true;
-         }
-         else if (anchored)
-            break;
-         // step forward one character
-         if (sb_parse_next_codepoint(parse) < 0)
-            break; // encoding error
-      }
-   }
-   return false;
-}
+#define SB_PARSE_MATCH_STR_FN sb_parse_match_str_I32
+#define SB_PATTERN_EL_TYPE const I32
+#include "secret_buffer_parse_match_str.c"
+#undef SB_PARSE_MATCH_STR_FN
+#undef SB_PATTERN_EL_TYPE
