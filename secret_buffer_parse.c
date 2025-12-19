@@ -560,7 +560,7 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse) {
          while (pos < lim && base64_decode_table[lim[-1]] < 0)
             lim--;
          if (pos < lim) {
-            warn("lim-pos=%d, lim[-1]=%c, lim_bit=%d", (int)(lim-pos), lim[-1], parse->lim_bit);
+            //warn("lim-pos=%d, lim[-1]=%c, lim_bit=%d", (int)(lim-pos), lim[-1], parse->lim_bit);
             if (base64_decode_table[lim[-1]] < 0)
                SB_RETURN_ERROR("invalid base64 character");
             // ->lim_bit > 0 means the character lim[-1] is partially consumed.
@@ -580,7 +580,7 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse) {
          }
          if (base64_decode_table[lim[-1]] < 0)
             SB_RETURN_ERROR("invalid base64 character");
-         warn(" lim-pos=%d, lim[-1]=%c, lim_bit=%d", (int)(lim-pos), lim[-1], parse->lim_bit);
+         //warn(" lim-pos=%d, lim[-1]=%c, lim_bit=%d", (int)(lim-pos), lim[-1], parse->lim_bit);
          cp |= (((int)base64_decode_table[lim[-1]]) << (6 - parse->lim_bit)) & 0xFF;
          parse->lim_bit += 2;
          if (parse->lim_bit >= 6) {
@@ -591,7 +591,7 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse) {
             while (pos < lim && base64_decode_table[lim[-1]] < 0)
                lim--;
          }
-         warn(" cp=%d, lim-pos=%d, lim_bit=%d", cp, (int)(lim-pos), parse->lim_bit);
+         //warn(" cp=%d, lim-pos=%d, lim_bit=%d", cp, (int)(lim-pos), parse->lim_bit);
       } while (again);
    }
    else SB_RETURN_ERROR("unsupported encoding")

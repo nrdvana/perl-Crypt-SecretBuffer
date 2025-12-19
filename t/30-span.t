@@ -246,6 +246,13 @@ subtest copy_iso8859 => sub {
    is( $s->length, 6, 'span is 6 bytes' );
    ok( !eval { $s->copy }, 'copy died' );
    like( $@, qr/ends beyond buffer/, 'error message' );
+
+   # Copy empty span
+   my $x;
+   secret("-")->span(0,0)->copy_to($x);
+   is( $x, '', 'empty string from empty span' );
+   secret->span->copy_to($x);
+   is( $x, '', 'empty string from buffer lacking any storage' );
 };
 
 subtest copy_widechar => sub {

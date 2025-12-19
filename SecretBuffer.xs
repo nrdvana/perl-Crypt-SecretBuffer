@@ -1124,7 +1124,7 @@ copy_to(self, ...)
          croak("transcode failed: %s", src.error? src.error : dst.error);
       // If the output was actually a SV, assign that now
       if (dst_sv) {
-         sv_setpvn_mg(dst_sv, dst_buf->data, dst_buf->len);
+         sv_setpvn_mg(dst_sv, dst_buf->len? dst_buf->data : "", dst_buf->len);
          // and if no encoding was requested, upgrade to wide characters
          if (dst_encoding == SECRET_BUFFER_ENCODING_UTF8 && dst_encoding_req < 0)
             SvUTF8_on(dst_sv);
