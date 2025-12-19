@@ -194,6 +194,13 @@ Copy the current span of bytes.  C<copy> returns a new SecretBuffer object.  C<c
 into an existing buffer, which can be either a SecretBuffer or a scalar for non-secrets.  There
 is intentionally I<not> a method to I<return> a scalar, to avoid easily leaking secrets.
 
+=method memcmp
+
+  $cmp= $span->memcmp($other_thing);
+
+Compare contents of span byte-by-byte to another Span, SecretBuffer, or plain scalar.
+Returns the same as the 'cmp' operator.
+
 Options:
 
 =over

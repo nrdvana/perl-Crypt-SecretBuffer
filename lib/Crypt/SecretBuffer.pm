@@ -205,6 +205,12 @@ Decode hexadecimal from the buffer before comparing to bytes in the search strin
 Hex is case-insensitive and whitespace is ignored, allowing the data to be line-wraped.
 There must be a multiple of two hex characters, and each byte's characters must be adjacent.
 
+=item BASE64
+
+Decode Base64 (C<< A-Za-z0-9+/= >>, with '=' used to pad to a multiple of 4 characters) from the
+buffer before comparing to bytes in the search string.  The decoder skips across whitespace and
+control characters.
+
 =item UTF8
 
 =item UTF16BE
