@@ -141,6 +141,13 @@ subtest starts_with => sub {
    $s->encoding('UTF-8');
    ok $s->starts_with(qr/[\x{100}]/), 'starts with utf-8 char (using charset)';
    ok $s->starts_with("\x{100}"), 'starts with utf-8 char (using literal)';
+
+   $s= secret("\x01\xFF")->span;
+   ok( $s->starts_with(secret("\x01\xFF")->span), 'starts_with a ISO-8859-1 span' );
+   ok( $s->starts_with(secret("01FF")->span(encoding => HEX)), 'starts_with a HEX span' );
+   $x= "\x01\xFF";
+   utf8::encode($x);
+   ok( $s->starts_with(secret($x)->span(encoding => UTF8)), 'starts_with a UTF-8 span' );
 };
 
 subtest ends_with => sub {

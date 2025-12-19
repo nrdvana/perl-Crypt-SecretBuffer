@@ -66,26 +66,65 @@ bool secret_buffer_parse_init(secret_buffer_parse *parse,
  */
 bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
    REGEXP *rx= (REGEXP*)SvRX(pattern);
+   secret_buffer *src_buf;
+   secret_buffer_span *span;
+   /* Is the pattern a regexp-ref? */
    if (rx) {
       secret_buffer_charset *cset= secret_buffer_charset_from_regexpref(pattern);
       return secret_buffer_match_charset(parse, cset, flags);
-   } else {
+   }
+   /* Is the pattern a SecretBuffer? */
+   else if (SvROK(pattern) && (src_buf= secret_buffer_from_magic(pattern, 0))) {
+      return sb_parse_match_str_U8(parse, src_buf->data, src_buf->len, flags);
+   }
+   /* Is the pattern a SecretBuffer::Span? */
+   else if (SvROK(pattern) && (span= secret_buffer_span_from_magic(pattern, 0))) {
+      secret_buffer_parse pattern_parse;
+      SV **buf_field= hv_fetchs(((HV*)SvRV(pattern)), "buf", 0);
+      IV len= span->lim - span->pos;
+      if (!buf_field || !*buf_field || !(src_buf= secret_buffer_from_magic(*buf_field, 0)))
+         croak("Span lacks reference to source buffer");
+      if (!secret_buffer_parse_init(&pattern_parse, src_buf, span->pos, span->lim, span->encoding))
+         croak("%s", pattern_parse.error);
+      /* optimize if it is a span of plain bytes */
+      if (span->encoding == SECRET_BUFFER_ENCODING_ISO8859_1) {
+         return sb_parse_match_str_U8(parse, pattern_parse.pos, len, flags);
+      }
+      /* else need to unpack the codepoints of the span */
+      else {
+         /* create a temporary secret buffer of integers */
+         secret_buffer *tmp= secret_buffer_new(len * sizeof(I32), NULL);
+         IV i= 0;
+         while (pattern_parse.pos < pattern_parse.lim) {
+            int cp= sb_parse_next_codepoint(&pattern_parse);
+            if (cp < 0)
+               croak("encoding error in pattern: %s", pattern_parse.error);
+            ASSUME(i < len);
+            ((I32*)tmp->data)[i++]= cp;
+         }
+         secret_buffer_set_len(tmp, i * sizeof(I32));
+         return sb_parse_match_str_I32(parse, (I32*) tmp->data, i, flags);
+      }
+   }
+   /* Else treat it as a normal SV, either UTF-8 or bytes (ISO8859-1) */
+   else {
       STRLEN len;
       U8 *str= (U8*) SvPV(pattern, len);
       if (SvUTF8(pattern)) {
          /* unpack the UTF8 codepoints into I32 array.  Just in case they are a
           * secret, use a SecretBuffer instead of a plain malloc.
           */
-         secret_buffer *sb= secret_buffer_new(len * 4, NULL); /* mortal, cleans itself up */
+         secret_buffer *sb= secret_buffer_new(len * sizeof(I32), NULL); /* mortal, cleans itself up */
          STRLEN step, i= 0;
          U8 *lim= str + len;
          while (str < lim) {
+            ASSUME(i < len);
             ((I32*)sb->data)[i++]= utf8_to_uvchr_buf(str, lim, &step);
             if (step <= 0)
                croak("Malformed utf8 character");
             str += step;
          }
-         secret_buffer_set_len(sb, i * 4);
+         secret_buffer_set_len(sb, i * sizeof(I32));
          return sb_parse_match_str_I32(parse, (I32*) sb->data, i, flags);
       }
       return sb_parse_match_str_U8(parse, str, len, flags);
