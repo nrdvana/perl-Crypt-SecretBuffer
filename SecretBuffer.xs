@@ -31,6 +31,7 @@ typedef struct secret_buffer_span {
 
 // For typemap
 typedef secret_buffer_span *auto_secret_buffer_span;
+int sb_parse_codepointcmp(secret_buffer_parse *lhs, secret_buffer_parse *rhs);
 
 /**********************************************************************************************\
 * XS Utils
@@ -1063,14 +1064,12 @@ copy_to(self, ...)
       copy = 1
    INIT:
       secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
-      SV **sb_sv= hv_fetchs((HV*)SvRV(self), "buf", 1);
-      secret_buffer *buf= secret_buffer_from_magic(*sb_sv, SECRET_BUFFER_MAGIC_OR_DIE);
       secret_buffer *dst_buf= NULL;
       SV *dst_sv= NULL;
       SSize_t append_ofs, need_bytes;
       int next_arg, dst_encoding_req= -1, dst_encoding= -1;
       secret_buffer_parse src, dst;
-      if (!secret_buffer_parse_init(&src, buf, span->pos, span->lim, span->encoding))
+      if (!secret_buffer_parse_init_from_sv(&src, self))
          croak("%s", src.error);
    PPCODE:
       if (ix == 0) {
@@ -1134,6 +1133,25 @@ copy_to(self, ...)
       // copy returns the SecretBuffer, but copy_to returns empty list.
       if (ix == 1)
          PUSHs(sv_2mortal(newRV_inc(dst_buf->wrapper)));
+
+IV
+cmp(lhs, rhs, reverse=false)
+   SV *lhs
+   SV *rhs
+   bool reverse
+   INIT:
+      secret_buffer_parse lhs_parse, rhs_parse;
+      I32 lhs_cp, rhs_cp;
+      if (!secret_buffer_parse_init_from_sv(&lhs_parse, lhs))
+         croak("%s", lhs_parse.error);
+      if (!secret_buffer_parse_init_from_sv(&rhs_parse, rhs))
+         croak("%s", rhs_parse.error);
+   CODE:
+      RETVAL= sb_parse_codepointcmp(&lhs_parse, &rhs_parse);
+      if (reverse)
+         RETVAL= -RETVAL;
+   OUTPUT:
+      RETVAL
 
 BOOT:
    HV *stash= gv_stashpvs("Crypt::SecretBuffer", 1);
