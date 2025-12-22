@@ -6,7 +6,7 @@ use strict;
 use warnings;
 use Crypt::SecretBuffer; # loads XS methods into this package
 use overload 'cmp'  => \&cmp,
-             '""'   => sub { 'Span('.$_[0]->buf->stringify_mask.', pos='.$_[0]->pos.', len='.$_[0]->len.')' },
+             '""'   => sub { 'Span('.($_[0]->buf->stringify_mask||"[REDACTED]").', pos='.$_[0]->pos.', len='.$_[0]->len.')' },
              'bool' => sub{1}; # span objects are always true
 
 =head1 SYNOPSIS
