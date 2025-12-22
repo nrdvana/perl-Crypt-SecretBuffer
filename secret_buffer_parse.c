@@ -13,7 +13,7 @@ static bool sb_parse_match_charset_codepoints(secret_buffer_parse *parse, const 
 static bool sb_parse_match_str_U8(secret_buffer_parse *parse, const U8 *pattern, int pattern_len, int flags);
 static bool sb_parse_match_str_I32(secret_buffer_parse *parse, const I32 *pattern, int pattern_len, int flags);
 
-static bool parse_encoding(SV *sv, int *out) {
+static bool parse_encoding(pTHX_ SV *sv, int *out) {
    int enc;
    if (looks_like_number(sv)) {
       IV i= SvIV(sv);
@@ -64,6 +64,7 @@ bool secret_buffer_parse_init(secret_buffer_parse *parse,
 /* Initialize a parse struct, either from a Span, or a SecretBuffer, or a plain Scalar.
  */
 bool secret_buffer_parse_init_from_sv(secret_buffer_parse *parse, SV *sv) {
+   dTHX;
    secret_buffer *sb;
    secret_buffer_span *span;
    /* Is the sv a Span object? */
@@ -97,6 +98,7 @@ bool secret_buffer_parse_init_from_sv(secret_buffer_parse *parse, SV *sv) {
  * Regexes are currently limited to a single charclass.
  */
 bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
+   dTHX;
    REGEXP *rx= (REGEXP*)SvRX(pattern);
    secret_buffer *src_buf;
    secret_buffer_span *span;
@@ -107,7 +109,7 @@ bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
    }
    /* Is the pattern a SecretBuffer? */
    else if (SvROK(pattern) && (src_buf= secret_buffer_from_magic(pattern, 0))) {
-      return sb_parse_match_str_U8(parse, src_buf->data, src_buf->len, flags);
+      return sb_parse_match_str_U8(parse, (U8*) src_buf->data, src_buf->len, flags);
    }
    /* Is the pattern a SecretBuffer::Span? */
    else if (SvROK(pattern) && (span= secret_buffer_span_from_magic(pattern, 0))) {
@@ -449,7 +451,7 @@ int sb_parse_codepointcmp(secret_buffer_parse *lhs, secret_buffer_parse *rhs) {
 
 /* UTF-8 decoding helper */
 static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
-   U8 *pos= parse->pos, *lim= parse->lim, *next;
+   U8 *pos= parse->pos, *lim= parse->lim;
    int cp, encoding= parse->encoding;
    #define SB_RETURN_ERROR(msg) { parse->error= msg; return -1; }
 

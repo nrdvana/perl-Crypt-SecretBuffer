@@ -81,7 +81,7 @@ static bool sbc_test_codepoint(pTHX_ const secret_buffer_charset *cset, uint32_t
       if (!cset->rx) return false;
       SV *test_sv= sv_2mortal(newSV(8));
       char *utf8_buf= SvPVX(test_sv);
-      char *end = uvchr_to_utf8(utf8_buf, cp);
+      char *end = (char*) uvchr_to_utf8((U8*) utf8_buf, cp);
       *end= '\0';
       SvPOK_on(test_sv);
       SvCUR_set(test_sv, (end - utf8_buf));
