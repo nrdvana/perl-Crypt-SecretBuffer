@@ -148,15 +148,19 @@ bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
          /* unpack the UTF8 codepoints into I32 array.  Just in case they are a
           * secret, use a SecretBuffer instead of a plain malloc.
           */
+         secret_buffer_parse tmp;
          secret_buffer *sb= secret_buffer_new(len * sizeof(I32), NULL); /* mortal, cleans itself up */
-         STRLEN step, i= 0;
-         U8 *lim= str + len;
-         while (str < lim) {
+         size_t i= 0;
+         Zero(&tmp, 1, secret_buffer_parse);
+         tmp.pos= str;
+         tmp.lim= str + len;
+         tmp.encoding= SECRET_BUFFER_ENCODING_UTF8;
+         while (tmp.pos < tmp.lim) {
+            int cp= sb_parse_next_codepoint(&tmp);
+            if (cp < 0)
+               croak("%s", tmp.error);
             ASSUME(i < len);
-            ((I32*)sb->data)[i++]= utf8_to_uvchr_buf(str, lim, &step);
-            if (step <= 0)
-               croak("Malformed utf8 character");
-            str += step;
+            ((I32*)sb->data)[i++]= cp;
          }
          secret_buffer_set_len(sb, i * sizeof(I32));
          return sb_parse_match_str_I32(parse, (I32*) sb->data, i, flags);
