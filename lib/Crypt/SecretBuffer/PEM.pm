@@ -21,16 +21,20 @@ of a block of Base64 data with optional headers and begin/end markers.  This mod
 begin/end markers, copies that span of bytes into a new SecretBuffer, makes the attributes into
 a hash, and marks the Base64 span in case you want to process the bytes.
 
+To be clear, this only parses the I<text portions> of PEM, I<not the ASN.1 structure> within the
+base64 data.
+
 The label around the PEM block and the keys of its headers (if any) are considered non-secret,
 and copied out of the SecretBuffer into perl scalars.  The values of the headers, and the Base64
-payload remain secret.
+payload remain inside secret Span objects.
 
 =constructor parse
 
   my $pem= Crypt::SecretBuffer::PEM->parse($span);
 
 Parse the next PEM block found in the L<Span|Crypt::SecretBuffer::Span>.  The span is updated to
-begin on the line following the PEM block.  If no PEM block is found, the span is unaltered.
+begin on the line following the PEM block.  If no PEM block is found, the span object remains
+unchanged.
 
 Invalid PEM blocks (such as mismatched BEGIN/END markers) are ignored, as well as any text
 outside of the markers.
@@ -46,7 +50,7 @@ This just calls L</parse> in a loop until no more PEM blocks are found.
 
   my $pem= Crypt::SecretBuffer::PEM->new(%attributes);
 
-You can construct a PEM object from attributes, in case you want to serialize one.
+You can construct a PEM object from attributes, in case you want to serialize your own data.
 
 =cut
 
@@ -138,7 +142,7 @@ The text from the PEM begin-marker:
    ...
    -----END SOME LABEL-----
 
-IN this case the attribute would hold C<< 'SOME LABEL' >>.
+In this case the attribute would hold C<< 'SOME LABEL' >>.
 
 =attribute buffer
 
@@ -157,7 +161,7 @@ Note that the values are L<Span|Crypt::SecretBuffer::Span> objects.
 
 =attribute content
 
-A L<Span|Crypt::SecretBuffer::Span>  or SecretBuffer that contains the bytes of the PEM payload.
+A L<Span|Crypt::SecretBuffer::Span> or SecretBuffer that contains the bytes of the PEM payload.
 
 =cut
 
