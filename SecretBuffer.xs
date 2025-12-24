@@ -1159,6 +1159,7 @@ cmp(lhs, rhs, reverse=false)
          croak("%s", rhs_parse.error);
    CODE:
       RETVAL= sb_parse_codepointcmp(&lhs_parse, &rhs_parse);
+      RETVAL= RETVAL < 0? -1 : RETVAL > 0? 1 : 0;
       if (reverse)
          RETVAL= -RETVAL;
    OUTPUT:
