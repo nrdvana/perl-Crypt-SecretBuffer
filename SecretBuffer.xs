@@ -120,7 +120,7 @@ static void* memmem(
    const void *needle, size_t needlelen
 ) {
    if (!needle || !needlelen) {
-      return haystack;
+      return (void*) haystack;
    }
    else if (!haystack || !haystacklen) {
       return NULL;
