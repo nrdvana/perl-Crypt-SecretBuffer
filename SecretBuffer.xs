@@ -694,7 +694,7 @@ append_sysread(buf, handle, count)
    INIT:
       IV got;
    PPCODE:
-      got= secret_buffer_append_read(buf, handle, count);
+      got= secret_buffer_append_sysread(buf, handle, count);
       ST(0)= (got < 0)? &PL_sv_undef : sv_2mortal(newSViv(got));
       XSRETURN(1);
 

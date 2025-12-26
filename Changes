@@ -1,3 +1,6 @@
+  - Fix Win32 compatibility
+  - Fix bug where ->sysread was actually calling the ->read implementation
+
 Version 0.015 - 2025-12-22
   - Fix 5.8 and C89 compatibility
 
