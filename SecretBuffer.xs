@@ -380,6 +380,9 @@ static IV parse_alloc_flags(pTHX_ SV *sv) {
 typedef int secret_buffer_io_flags;
 typedef int secret_buffer_alloc_flags;
 
+typedef sb_console_state maybe_console_state;
+typedef sb_console_state auto_console_state;
+
 /**********************************************************************************************\
  * Debug helpers
 \**********************************************************************************************/
@@ -852,6 +855,74 @@ wait(result, timeout=-1)
       } else {
          XSRETURN(0);
       }
+
+MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::ConsoleState
+
+void
+new(pkg, handle)
+   const char *pkg;
+   PerlIO *handle
+   ALIAS:
+      maybe_scope_guard = 1
+      maybe_scope_guard_if_disable_echo = 2
+   INIT:
+      sb_console_state cstate, *magic_cstate;
+      bool looks_like_console= sb_console_state_init(aTHX_ &cstate, handle);
+      SV *objref;
+   PPCODE:
+      /* if it fails to initialize, then return undef (because probably not a console/TTY)
+       * If the _if_disable_echo variant is requested, also return undef if echo is already
+       * disabled, or if disabling echo fails.
+       */
+      if (looks_like_console && (
+            ix != 2
+            || (sb_console_state_get_echo(&cstate) && sb_console_state_set_echo(&cstate, false))
+         )
+      ) {
+         /* echo disabled successfully, create the object */
+         ST(0)= objref= sv_2mortal(newRV_noinc(&PL_sv_yes));
+         newSVrv(objref, pkg);
+         magic_cstate= secret_buffer_console_state_from_magic(objref, SECRET_BUFFER_MAGIC_AUTOCREATE);
+         *magic_cstate= cstate;
+         /* duplicate file handle in case user closes it */
+         sb_console_state_dup_fd(magic_cstate);
+         /* enable auto_restore if user requested a scope_guard */
+         magic_cstate->auto_restore= ix > 0;
+      } else {
+         /*  not a console, or echo already disabled, so no scope guard needed */
+         ST(0)= &PL_sv_undef;
+      }
+
+bool
+echo(cstate, enable=NULL)
+   sb_console_state *cstate
+   SV *enable
+   CODE:
+      if (enable != NULL)
+         sb_console_state_set_echo(cstate, SvTRUE(enable));
+      RETVAL= sb_console_state_get_echo(cstate);
+   OUTPUT:
+      RETVAL
+
+bool
+auto_restore(cstate, enable=NULL)
+   sb_console_state *cstate
+   SV *enable
+   CODE:
+      if (enable != NULL)
+         cstate->auto_restore= SvTRUE(enable);
+      RETVAL= cstate->auto_restore;
+   OUTPUT:
+      RETVAL
+
+bool
+restore(cstate)
+   sb_console_state *cstate
+   CODE:
+      RETVAL= sb_console_state_restore(cstate);
+      cstate->auto_restore= false; /* no longer run restore on destructor */
+   OUTPUT:
+      RETVAL
 
 MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::Span
 
