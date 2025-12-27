@@ -859,39 +859,69 @@ wait(result, timeout=-1)
 MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::ConsoleState
 
 void
-new(pkg, handle)
+new(pkg, ...)
    const char *pkg;
-   PerlIO *handle
    ALIAS:
-      maybe_scope_guard = 1
-      maybe_scope_guard_if_disable_echo = 2
+      maybe_new = 1
    INIT:
       sb_console_state cstate, *magic_cstate;
-      bool looks_like_console= sb_console_state_init(aTHX_ &cstate, handle);
+      PerlIO *handle= NULL;
+      SV *auto_restore= NULL;
+      SV *set_echo= NULL;
       SV *objref;
-   PPCODE:
-      /* if it fails to initialize, then return undef (because probably not a console/TTY)
-       * If the _if_disable_echo variant is requested, also return undef if echo is already
-       * disabled, or if disabling echo fails.
-       */
-      if (looks_like_console && (
-            ix != 2
-            || (sb_console_state_get_echo(&cstate) && sb_console_state_set_echo(&cstate, false))
-         )
-      ) {
-         /* echo disabled successfully, create the object */
-         ST(0)= objref= sv_2mortal(newRV_noinc(&PL_sv_yes));
-         newSVrv(objref, pkg);
-         magic_cstate= secret_buffer_console_state_from_magic(objref, SECRET_BUFFER_MAGIC_AUTOCREATE);
-         *magic_cstate= cstate;
-         /* duplicate file handle in case user closes it */
-         sb_console_state_dup_fd(magic_cstate);
-         /* enable auto_restore if user requested a scope_guard */
-         magic_cstate->auto_restore= ix > 0;
-      } else {
-         /*  not a console, or echo already disabled, so no scope guard needed */
-         ST(0)= &PL_sv_undef;
+      if (items == 2) {
+         IO *io = sv_2io(ST(1));
+         handle= io? IoIFP(io) : NULL;
+      } else if (items > 2) {
+         int i= 1;
+         if ((items - 1) & 1)
+            croak("expected even-length key/value attribute list");
+         for (; i < items; i+= 2) {
+            STRLEN len;
+            const char *name= SvPV(ST(i), len);
+            if (len == 4 && memcmp(name, "echo", 4) == 0) {
+               set_echo= ST(i+1);
+            }
+            else if (len == 6 && memcmp(name, "handle", 6) == 0) {
+               IO *io = sv_2io(ST(i+1));
+               handle= io? IoIFP(io) : NULL;
+            }
+            else if (len == 12 && memcmp(name, "auto_restore", 12) == 0) {
+               auto_restore= ST(i+1);
+            }
+            else {
+               croak("Unknown option '%s'", name);
+            }
+         }
       }
+      if (!handle)
+         croak("'handle' is required");
+   PPCODE:
+      ST(0)= &PL_sv_undef;
+      /* if it fails to initialize, return undef for 'maybe_new', else die */
+      if (!sb_console_state_init(aTHX_ &cstate, handle)) {
+         if (ix == 0)
+            croak("Can't read console/tty state");
+         XSRETURN(1);
+      }
+      if (auto_restore)
+         cstate.auto_restore= SvTRUE(auto_restore);
+      if (set_echo && SvOK(set_echo)) {
+         /* if user called 'maybe_new' and echo state aready matches requested
+            state, return undef. */
+         if (ix == 1 && sb_console_state_get_echo(&cstate) == (bool)SvTRUE(set_echo))
+            XSRETURN(1);
+         if (!sb_console_state_set_echo(&cstate, SvTRUE(set_echo)))
+            croak("set echo = %d failed", (int)(SvTRUE(set_echo)));
+      }
+      /* new blessed ConsoleState object */
+      ST(0)= objref= sv_2mortal(newRV_noinc(&PL_sv_yes));
+      newSVrv(objref, pkg);
+      /* move cstate into MAGIC on object */
+      magic_cstate= secret_buffer_console_state_from_magic(objref, SECRET_BUFFER_MAGIC_AUTOCREATE);
+      *magic_cstate= cstate;
+      /* duplicate file handle in case user closes it */
+      sb_console_state_dup_fd(magic_cstate);
       XSRETURN(1);
 
 bool

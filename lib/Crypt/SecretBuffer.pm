@@ -507,7 +507,11 @@ file handle is a virtual Perl handle not backed by the OS.
 
 sub append_console_line {
    my ($self, $handle, %options)= @_;
-   my $echo_off= Crypt::SecretBuffer::ConsoleState->maybe_scope_guard_if_disable_echo($handle);
+   my $echo_off= Crypt::SecretBuffer::ConsoleState->maybe_new(
+      handle => $handle,
+      echo => 0,
+      auto_restore => 1
+   );
    if (defined(my $prompt= delete $options{prompt})) {
       my $prompt_fh= delete $options{prompt_fh} || $handle;
       $prompt_fh->print($prompt);

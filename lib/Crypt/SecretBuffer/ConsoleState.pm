@@ -10,21 +10,44 @@ __END__
 This object provides a cross-platform way to inspect the TTY echo flag on Unix or the Console
 echo flag on Windows, disable echo, and restore it on scope end.
 
+=constructor new
+
+  $console_state= Crypt::SecretBuffer::ConsoleState->new($handle);
+  $console_state= Crypt::SecretBuffer::ConsoleState->new(%options);
+
+Return a new object which caches the console/tty state of the provided file handle.
+If the handle is not a console/tty, this dies.
+
+Options:
+
+  handle        => $fh,
+  auto_restore  => $bool
+  echo          => $bool
+
 =constructor maybe_new
 
-Return a new object which caches the state of the provided file handle.  If the handle is not
-a console/tty, this returns C<undef>.
+  $console_state= Crypt::SecretBuffer::ConsoleState->maybe_new($handle);
+  $console_state= Crypt::SecretBuffer::ConsoleState->maybe_new(%options);
 
-=constructor maybe_scope_guard
+Return a new object B<unless> the C<$handle> is not a console/tty, or if you request an echo
+state and the console/tty is already in that state.  In other words, instead of writing
 
-Returns a new object like L<maybe_new> and automatically sets L</auto_restore> so that it calls
-L</restore> when the object goes out of scope.
+  my $st= eval { Crypt::SecretBuffer::ConsoleState->new($handle) };
+  if ($st->echo) {
+    $st->echo(0);
+    $st->auto_restore(1);
+  }
 
-=constructor maybe_scope_guard_if_disable_echo
+you can write
 
-Like L</maybe_scope_guard> but also return C<undef> if the echo is already disabled on the
-console/tty.  This is the most efficient approach for disabling echo because nothing gets
-created if it isn't a console or echo is already disabled.
+  my $scope_guard= Crypt::SecretBuffer::ConsoleState->maybe_new(
+    handle => $fh,
+    auto_restore => 1,
+    echo => 0
+  );
+
+and if it is not a tty or echo is already off, it returns C<$undef> and skips the creation of
+the object entirely.
 
 =attribute auto_restore
 
