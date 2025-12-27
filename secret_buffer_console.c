@@ -40,7 +40,8 @@ int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *stream) {
    dTHX;
    sb_console_state cstate;
    /* If either step fails, assume its not a console and keep going */
-   bool console_changed= sb_console_state_init(aTHX_ &cstate, stream)
+   bool is_console= sb_console_state_init(aTHX_ &cstate, stream);
+   bool console_changed= is_console
                       && sb_console_state_get_echo(&cstate)
                       && sb_console_state_set_echo(&cstate, false);
    /* Read one character at a time, because once we find "\n" the rest needs to stay in the OS buffer.
@@ -57,8 +58,10 @@ int secret_buffer_append_console_line(secret_buffer *buf, PerlIO *stream) {
          --buf->len; /* back up one char */
          /* in the event of reading a text file, try to consume the "\n" that follows a "\r".
           * If we get anything else, push it back into Perl's buffer.
+          * There really ought to be a test for "is it a disk file", or make it a nonblocking
+          * read, but I don't know how to write that portably for Win32.
           */
-         if (*eol == '\r') {
+         if (*eol == '\r' && !is_console) {
             if (secret_buffer_append_read(buf, stream, 1) > 0) {
                --buf->len;
                if (*eol != '\n') {
