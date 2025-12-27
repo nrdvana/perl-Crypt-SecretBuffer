@@ -491,7 +491,11 @@ of bytes and never blocks.
 
 =method append_console_line
 
-  $bool= $buf->append_console_line(STDIN);
+  $bool= $buf->append_console_line($handle);
+  $bool= $buf->append_console_line($handle,
+    prompt => "Enter Password: ",
+    prompt_fh => $alternate_handle,   # optional
+  );
 
 This turns off TTY echo (if the handle is a Unix TTY or Windows Console) and reads and appends
 characters until newline or EOF (and does not store the \r or \n characters).
@@ -502,6 +506,10 @@ There may also be no characters added when it returns true, if the user just hit
 When possible, this reads directly from the OS to avoid buffering the secret in libc or Perl,
 but reads from the buffer if you already have input data in one of those buffers, or if the
 file handle is a virtual Perl handle not backed by the OS.
+
+If you specify a prompt (new in version 0.016), the TTY echo is disabled before printing the
+prompt.  This helps prevent a race condition where a scripted interaction could start typing a
+password in response to the prompt before the echo was disabled.
 
 =cut
 
