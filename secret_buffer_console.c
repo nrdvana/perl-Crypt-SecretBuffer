@@ -133,6 +133,7 @@ int secret_buffer_console_state_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) 
 
 static bool sb_console_state_init(pTHX_ sb_console_state *state, PerlIO *stream) {
    int stream_fd;
+   HANDLE stream_hdl;
 
    Zero(state, 1, sb_console_state);
    state->hdl= INVALID_HANDLE_VALUE;
@@ -143,14 +144,15 @@ static bool sb_console_state_init(pTHX_ sb_console_state *state, PerlIO *stream)
       return false;
 
    /* LibC holds Win32 HANDLEs for each fd */
-   stream->hdl= (HANDLE)_get_osfhandle(fd);
-   if (stream->hdl == INVALID_HANDLE_VALUE || GetFileType(stream->hdl) != FILE_TYPE_CHAR)
+   stream_hdl= (HANDLE)_get_osfhandle(stream_fd);
+   if (stream_hdl == INVALID_HANDLE_VALUE || GetFileType(stream_hdl) != FILE_TYPE_CHAR)
       return false;
 
    /* Capture current state */
-   if (!GetConsoleMode(state->hdl, &state->orig_mode))
+   if (!GetConsoleMode(stream_hdl, &state->orig_mode))
       return false;
 
+   state->hdl= stream_hdl;
    state->mode= state->orig_mode;
    return true;
 }
@@ -189,7 +191,7 @@ static bool sb_console_state_restore(sb_console_state *state) {
 }
 
 static void sb_console_state_destroy(pTHX_ sb_console_state *state) {
-   if (state->hdl != INVALID_HANDLE_VALUE)
+   if (state->hdl != INVALID_HANDLE_VALUE) {
       if (state->auto_restore)
          if (!sb_console_state_restore(state))
             warn("failed to restore console state");
@@ -239,7 +241,7 @@ static bool sb_console_state_set_echo(sb_console_state *state, bool enable) {
    struct termios new_st= state->cur_state;
    new_st.c_lflag= enable? (new_st.c_lflag | ECHO)
                          : (new_st.c_lflag & ~ECHO);
-   if (tcsetattr(state->fd, TCSANOW, &state->cur_state) == 0) {
+   if (tcsetattr(state->fd, TCSANOW, &new_st) == 0) {
       state->cur_state= new_st;
       return true;
    }
@@ -256,8 +258,8 @@ static void sb_console_state_destroy(pTHX_ sb_console_state *state) {
          if (!sb_console_state_restore(state))
             warn("failed to restore console state");
       if (state->own_fd)
-         if (!close(state->fd))
-            warn("BUG: CloseHandle failed");
+         if (close(state->fd) < 0)
+            warn("BUG: close(tty_dup) failed");
       state->fd= -1;
    }
 }

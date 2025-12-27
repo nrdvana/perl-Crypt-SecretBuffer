@@ -503,6 +503,19 @@ When possible, this reads directly from the OS to avoid buffering the secret in 
 but reads from the buffer if you already have input data in one of those buffers, or if the
 file handle is a virtual Perl handle not backed by the OS.
 
+=cut
+
+sub append_console_line {
+   my ($self, $handle, %options)= @_;
+   my $echo_off= Crypt::SecretBuffer::ConsoleState->maybe_scope_guard_if_disable_echo($handle);
+   if (defined(my $prompt= delete $options{prompt})) {
+      my $prompt_fh= delete $options{prompt_fh} || $handle;
+      $prompt_fh->print($prompt);
+      $prompt_fh->flush;
+   }
+   return $self->_append_console_line($handle);
+}
+
 =method append_sysread
 
   $byte_count= $buf->append_sysread($fh, $count);

@@ -714,7 +714,7 @@ append_read(buf, handle, count)
       XSRETURN(1);
 
 void
-append_console_line(buf, handle)
+_append_console_line(buf, handle)
    auto_secret_buffer buf
    PerlIO *handle
    INIT:
@@ -892,6 +892,7 @@ new(pkg, handle)
          /*  not a console, or echo already disabled, so no scope guard needed */
          ST(0)= &PL_sv_undef;
       }
+      XSRETURN(1);
 
 bool
 echo(cstate, enable=NULL)
