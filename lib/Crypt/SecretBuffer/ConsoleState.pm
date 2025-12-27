@@ -1,6 +1,6 @@
 package Crypt::SecretBuffer::ConsoleState;
 # VERSION
-# ABSTRACT: Disable TTY echo within a block scope
+# ABSTRACT: Disable TTY echo within a scope
 
 1;
 __END__
@@ -33,7 +33,7 @@ Return a new object B<unless> the C<$handle> is not a console/tty, or if you req
 state and the console/tty is already in that state.  In other words, instead of writing
 
   my $st= eval { Crypt::SecretBuffer::ConsoleState->new($handle) };
-  if ($st->echo) {
+  if ($st && $st->echo) {
     $st->echo(0);
     $st->auto_restore(1);
   }
@@ -46,16 +46,18 @@ you can write
     echo => 0
   );
 
-and if it is not a tty or echo is already off, it returns C<$undef> and skips the creation of
+and if it is not a tty or echo is already off, it returns C<undef> and skips the creation of
 the object entirely.
 
 =attribute auto_restore
 
-Automatically call C<restore> on object destruction (such as when it goes out of scope)
+Automatically call C<restore> on object destruction, such as when it goes out of scope.
+Boolean, read/write.
 
 =attribute echo
 
 Get or set the ECHO flag on the console/tty.
+Boolean, read/write.
 
 =method restore
 
