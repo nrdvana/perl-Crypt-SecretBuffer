@@ -1088,6 +1088,31 @@ encoding(span, newval_sv= NULL)
       PUSHs(enc_const);
 
 void
+set_up_us_the_bom(self)
+   SV *self
+   ALIAS:
+      consume_bom = 1
+   INIT:
+      secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
+      secret_buffer_parse p;
+      if (!secret_buffer_parse_init_from_sv(&p, self))
+         croak("%s", p.error);
+   PPCODE:
+      if (p.lim - p.pos >= 3 && p.pos[0] == 0xEF && p.pos[1] == 0xBB && p.pos[2] == 0xBF) {
+         span->encoding= SECRET_BUFFER_ENCODING_UTF8;
+         span->pos += 3;
+      }
+      else if (p.lim - p.pos >= 2 && p.pos[0] == 0xFF && p.pos[1] == 0xFE) {
+         span->encoding= SECRET_BUFFER_ENCODING_UTF16LE;
+         span->pos += 2;
+      }
+      else if (p.lim - p.pos >= 2 && p.pos[0] == 0xFE && p.pos[1] == 0xFF) {
+         span->encoding= SECRET_BUFFER_ENCODING_UTF16BE;
+         span->pos += 2;
+      }
+      XSRETURN(1);
+
+void
 scan(self, pattern=NULL, flags= 0)
    SV *self
    SV *pattern
