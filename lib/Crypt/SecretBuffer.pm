@@ -511,36 +511,73 @@ When possible, this reads directly from the OS to avoid buffering the secret in 
 but reads from the buffer if you already have input data in one of those buffers, or if the
 file handle is a virtual Perl handle not backed by the OS.
 
-If you specify a prompt (new in version 0.016), the TTY echo is disabled before printing the
-prompt.  This helps prevent a race condition where a scripted interaction could start typing a
-password in response to the prompt before the echo was disabled.
+Options:
 
-If you specify C<char_mask> (new in version 0.017), it displays that string every time a
-character is entered.  To do this, the TTY line-input mode is disabled and the code processes
-each character as it is received, manually handling backspace etc.  The code does I<not>
-handle TTY geometry or unicode, and will display incorrectly if the user reaches the edge of
-the terminal and wraps.  This won't usually be a problem if you just want some fancy handling
-of N-digit codes where you want to return as soon as they reach the limit:
+=over
+
+=item prompt
+
+This message is printed and flushed after disabling TTY echo.  This helps prevent a race
+condition where a scripted interaction could start typing a password in response to the prompt
+before the echo was disabled.
+
+=item prompt_fh
+
+If C<$handle> is STDIN (the most common scenario) perl will not be able to write to it because
+libc opened it with 'r' mode, even though the TTY is always writeable.  The automatic workaround
+is to get the file descriptor and open a second handle to it with 'w' mode.  If the automatic
+behavior is wrong for your use case, you can provide the write-handle with this option.
+
+=item char_mask
+
+Display this static string every time the user types a key, for feedback.  A common choice would
+be C<'*'> or C<'* '>.
+
+=item char_count
+
+Stop after N characters have been added to the buffer.  Note that unicode is not supported yet,
+so this really means N bytes.  Reaching N bytes is considered a success and causes
+append_console_line to return true.  If the user presses newline before N bytes,
+append_console_line will return false.
+
+=item char_max
+
+Stop appending characters when N have been added to the buffer, but don't return until the user
+presses newline.
+
+=item char_class
+
+Restrict the permitted characters.  This must be a Regexp-ref of a single character class.
+Any character the user enters which is not in this class will be ignored and not added to the
+buffer.
+
+=back
+
+When using options C<char_mask>, C<char_count>, or C<char_class>, the TTY line-input mode is
+disabled and the code processes each character as it is received, manually handling backspace
+etc.  The code does I<not> handle TTY geometry or unicode, and will display incorrectly if the
+user's input reaches the edge of the terminal.  This won't usually be a problem if you just
+want some fancy handling of N-digit codes where you want to return as soon as they reach the
+limit:
 
   $buf->append_console_line(STDIN,
-    prompt => "[             ]\b\b\b\b\b\b\b\b\b\b\b\b\b",
+    prompt => "PIN: [             ]\b\b\b\b\b\b\b\b\b\b\b\b\b",
     char_mask  => "* ",
     char_count => 6,
     char_class => qr/[0-9]/,
   );
 
-C<char_class> can be used to restrict the characters accepted from the user.  It must be a
-Regexp-ref of exactly one character class.
-
-If you want something more custom than this, the read loop is perl (not XS) and the
-cross-platform handling of console modes happens in L<Crypt::SecretBuffer::ConsoleState>.
+If this method doesn't have quite the behavior you were looking for, the read loop is perl
+(not XS) and the cross-platform handling of console modes happens in
+L<Crypt::SecretBuffer::ConsoleState>, so it should be reasonably easy to copy/paste and make
+your own.
 
 =cut
 
 sub append_console_line {
    my ($self, $handle, %options)= @_;
-   my ($prompt, $prompt_fh, $char_mask, $char_count, $char_class)
-      = delete @options{qw( prompt prompt_fh char_mask char_count char_class )};
+   my ($prompt, $prompt_fh, $char_mask, $char_count, $char_max, $char_class)
+      = delete @options{qw( prompt prompt_fh char_mask char_count char_max char_class )};
    warn "unknown option: ".join(', ', keys %options)
       if keys %options;
    if (!$prompt_fh && (defined $prompt || defined $char_mask)) {
@@ -565,8 +602,8 @@ sub append_console_line {
       $prompt_fh->print($prompt);
       $prompt_fh->flush;
    }
+   my $start_len= $self->length;
    if ($input_by_chars) {
-      my $start_len= $self->length;
       while (1) {
          $self->append_read($handle, 1)
             or return undef;
@@ -604,6 +641,10 @@ sub append_console_line {
             # not part of the permitted char class
             $self->length($end_pos);
          }
+         elsif ($char_max && $self->length - $start_len > $char_max) {
+            # refuse to add more characters
+            $self->length($end_pos);
+         }
          else {
             # char added
             if (length $char_mask) {
@@ -617,7 +658,12 @@ sub append_console_line {
       }
    }
    else {
-      return $self->_append_console_line($handle);
+      my $ret= $self->_append_console_line($handle);
+      if ($char_max && $self->length - $start_len > $char_max) {
+         # truncate the input if char_max requested
+         $self->length($start_len + $char_max);
+      }
+      return $ret;
    }
 }
 
