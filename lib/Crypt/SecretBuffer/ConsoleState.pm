@@ -23,6 +23,7 @@ Options:
   handle        => $fh,
   auto_restore  => $bool
   echo          => $bool
+  line_input    => $bool
 
 =constructor maybe_new
 
@@ -56,7 +57,14 @@ Boolean, read/write.
 
 =attribute echo
 
-Get or set the ECHO flag on the console/tty.
+Get or set the C<ECHO> flag on the console/tty.
+Boolean, read/write.
+
+=attribute line_input
+
+Get or set the line-buffering feature of the console/tty.  On Windows this is the
+C<ENABLE_LINE_INPUT> flag.  On Posix, this is the C<ICANON> flag, with the caveat that disabling
+it also enables the C<ISIG> flag so that the OS continues to handle C<^C> for you.
 Boolean, read/write.
 
 =method restore

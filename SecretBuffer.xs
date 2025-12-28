@@ -868,7 +868,9 @@ new(pkg, ...)
       PerlIO *handle= NULL;
       SV *auto_restore= NULL;
       SV *set_echo= NULL;
+      SV *set_line_input= NULL;
       SV *objref;
+      bool already_set= true;
       if (items == 2) {
          IO *io = sv_2io(ST(1));
          handle= io? IoIFP(io) : NULL;
@@ -885,6 +887,9 @@ new(pkg, ...)
             else if (len == 6 && memcmp(name, "handle", 6) == 0) {
                IO *io = sv_2io(ST(i+1));
                handle= io? IoIFP(io) : NULL;
+            }
+            else if (len == 10 && memcmp(name, "line_input", 10) == 0) {
+               set_line_input= ST(i+1);
             }
             else if (len == 12 && memcmp(name, "auto_restore", 12) == 0) {
                auto_restore= ST(i+1);
@@ -907,13 +912,25 @@ new(pkg, ...)
       if (auto_restore)
          cstate.auto_restore= SvTRUE(auto_restore);
       if (set_echo && SvOK(set_echo)) {
-         /* if user called 'maybe_new' and echo state aready matches requested
-            state, return undef. */
-         if (ix == 1 && sb_console_state_get_echo(&cstate) == (bool)SvTRUE(set_echo))
-            XSRETURN(1);
-         if (!sb_console_state_set_echo(&cstate, SvTRUE(set_echo)))
-            croak("set echo = %d failed", (int)(SvTRUE(set_echo)));
+         bool enable= SvTRUE(set_echo);
+         if (sb_console_state_get_echo(&cstate) != enable) {
+            already_set= false;
+            if (!sb_console_state_set_echo(&cstate, enable))
+               croak("set echo = %d failed", (int)enable);
+         }
       }
+      if (set_line_input && SvOK(set_line_input)) {
+         bool enable= SvTRUE(set_line_input);
+         if (sb_console_state_get_line_input(&cstate) != enable) {
+            already_set= false;
+            if (!sb_console_state_set_line_input(&cstate, enable))
+               croak("set echo = %d failed", (int)enable);
+         }
+      }
+      /* if user called 'maybe_new' and echo state aready matches requested
+         state, return undef. */
+      if (ix == 1 && already_set)
+         XSRETURN(1);
       /* new blessed ConsoleState object */
       ST(0)= objref= sv_2mortal(newRV_noinc(&PL_sv_yes));
       newSVrv(objref, pkg);
@@ -932,6 +949,17 @@ echo(cstate, enable=NULL)
       if (enable != NULL)
          sb_console_state_set_echo(cstate, SvTRUE(enable));
       RETVAL= sb_console_state_get_echo(cstate);
+   OUTPUT:
+      RETVAL
+
+bool
+line_input(cstate, enable=NULL)
+   sb_console_state *cstate
+   SV *enable
+   CODE:
+      if (enable != NULL)
+         sb_console_state_set_line_input(cstate, SvTRUE(enable));
+      RETVAL= sb_console_state_get_line_input(cstate);
    OUTPUT:
       RETVAL
 

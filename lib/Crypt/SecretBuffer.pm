@@ -143,6 +143,7 @@ things that are not SecretBuffer objects)
 use strict;
 use warnings;
 use Carp;
+use IO::Handle;
 use Scalar::Util ();
 use parent qw( DynaLoader );
 use overload '""' => \&stringify,
@@ -493,8 +494,11 @@ of bytes and never blocks.
 
   $bool= $buf->append_console_line($handle);
   $bool= $buf->append_console_line($handle,
-    prompt => "Enter Password: ",
-    prompt_fh => $alternate_handle,   # optional
+    prompt     => "Enter Password: ", # print prompt after disable echo
+    prompt_fh  => $alternate_handle,  # optional, handle for writing prompt
+    char_mask  => "*",                # show each char typed as '*'
+    char_count => $n,                 # stop after N characters (or newline)
+    char_class => qr/[...]/,          # limit to members of character class
   );
 
 This turns off TTY echo (if the handle is a Unix TTY or Windows Console) and reads and appends
@@ -511,21 +515,110 @@ If you specify a prompt (new in version 0.016), the TTY echo is disabled before 
 prompt.  This helps prevent a race condition where a scripted interaction could start typing a
 password in response to the prompt before the echo was disabled.
 
+If you specify C<char_mask> (new in version 0.017), it displays that string every time a
+character is entered.  To do this, the TTY line-input mode is disabled and the code processes
+each character as it is received, manually handling backspace etc.  The code does I<not>
+handle TTY geometry or unicode, and will display incorrectly if the user reaches the edge of
+the terminal and wraps.  This won't usually be a problem if you just want some fancy handling
+of N-digit codes where you want to return as soon as they reach the limit:
+
+  $buf->append_console_line(STDIN,
+    prompt => "[             ]\b\b\b\b\b\b\b\b\b\b\b\b\b",
+    char_mask  => "* ",
+    char_count => 6,
+    char_class => qr/[0-9]/,
+  );
+
+C<char_class> can be used to restrict the characters accepted from the user.  It must be a
+Regexp-ref of exactly one character class.
+
+If you want something more custom than this, the read loop is perl (not XS) and the
+cross-platform handling of console modes happens in L<Crypt::SecretBuffer::ConsoleState>.
+
 =cut
 
 sub append_console_line {
    my ($self, $handle, %options)= @_;
-   my $echo_off= Crypt::SecretBuffer::ConsoleState->maybe_new(
+   my ($prompt, $prompt_fh, $char_mask, $char_count, $char_class)
+      = delete @options{qw( prompt prompt_fh char_mask char_count char_class )};
+   warn "unknown option: ".join(', ', keys %options)
+      if keys %options;
+   if (!$prompt_fh && (defined $prompt || defined $char_mask)) {
+      my $fd= fileno($handle);
+      if (defined $fd && $fd >= 0) {
+         $prompt_fh= IO::Handle->new_from_fd($fd, 'w');
+      } elsif ($handle == \*STDIN) {
+         $prompt_fh= \*STDOUT;
+      } else {
+         $prompt_fh= $handle;
+      }
+   }
+   # If the user wants control over the keypresses, need to disable line-editing mode
+   my $input_by_chars= defined $char_mask || defined $char_count || defined $char_class;
+   my $ttystate= Crypt::SecretBuffer::ConsoleState->maybe_new(
       handle => $handle,
       echo => 0,
+      (line_input => 0)x!!$input_by_chars,
       auto_restore => 1
    );
-   if (defined(my $prompt= delete $options{prompt})) {
-      my $prompt_fh= delete $options{prompt_fh} || $handle;
+   if (defined $prompt) {
       $prompt_fh->print($prompt);
       $prompt_fh->flush;
    }
-   return $self->_append_console_line($handle);
+   if ($input_by_chars) {
+      my $start_len= $self->length;
+      while (1) {
+         $self->append_read($handle, 1)
+            or return undef;
+         # Handle control characters
+         my $end_pos= $self->length - 1;
+         if ($self->index(qr/[\0-\x1F\x7F]/, $end_pos) == $end_pos) {
+            # If it is \r or \n, end.  If char_count was requested, and we didn't
+            # end by that logic, then we don't have the requested char count, so
+            # return false.
+            if ($self->index(qr/[\r\n]/, $end_pos) == $end_pos) {
+               $self->length($end_pos); # remove CR or LF
+               return !$char_count;
+            }
+            # handle backspace
+            elsif ($self->index(qr/[\b\x7F]/, $end_pos) == $end_pos) {
+               $self->length($end_pos); # remove backspace
+               if ($self->length > $start_len) {
+                  $self->length($self->length-1); # remove previous char
+                  # print a backspace + space + backspace to erase the final mask character
+                  if (length $char_mask) {
+                     $prompt_fh->print(
+                        ("\b" x length $char_mask)
+                       .(" "  x length $char_mask)
+                       .("\b" x length $char_mask));
+                     $prompt_fh->flush;
+                  }
+               }
+            }
+            # just ignore any other control char
+            else {
+               $self->length($end_pos);
+            }
+         }
+         elsif ($char_class && $self->index($char_class, $end_pos) == -1) {
+            # not part of the permitted char class
+            $self->length($end_pos);
+         }
+         else {
+            # char added
+            if (length $char_mask) {
+               $prompt_fh->print($char_mask);
+               $prompt_fh->flush;
+            }
+            # If reached the char_count, return success
+            return 1
+               if $char_count && $self->length - $start_len >= $char_count;
+         }
+      }
+   }
+   else {
+      return $self->_append_console_line($handle);
+   }
 }
 
 =method append_sysread
