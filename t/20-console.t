@@ -135,6 +135,30 @@ subtest 'TTY functionality' => sub {
             or note 'contents: "'.$buf->unmask_to(\&escape_nonprintable).'"';
          $send_msg->('read_pty');
          is( [ $recv_msg->() ], ['read_pty', "Enter Password: "], 'Saw prompt, and no echo' );
+         # test that echo was restored
+         $send_msg->(type => "x\r");
+         $send_msg->(sleep => .1);
+         $send_msg->('read_pty');
+         is( [ $recv_msg->() ], ['read_pty', "x\r\n"], 'Echo resumed' );
+      });
+      done_testing;
+   };
+
+   # Read TTY limited to 6 decimal digits
+   subtest 'six decimal digits' => sub {
+      setup_tty_helper(sub{
+         my ($send_msg, $recv_msg, $tty)= @_;
+         my $buf= secret("some data already");
+         $send_msg->(wait_for => ': ');
+         $send_msg->(type => "0123qwerty\b456");
+         is $buf->append_console_line($tty, prompt => 'Enter PIN: ', char_mask => '* ', char_count => 6, char_class => qr/[0-9]/),
+            T,
+            'append_console_line returned true';
+         is $buf->memcmp("some data already012456"), 0, 'got expected digits'
+            or note 'contents: "'.$buf->unmask_to(\&escape_nonprintable).'"';
+         $send_msg->('read_pty');
+         is( [ $recv_msg->() ], ['read_pty', "Enter PIN: * * * * \b\b  \b\b* * * "], 'Saw prompt, and char_mask' );
+         # test that echo was restored
          $send_msg->(type => "x\r");
          $send_msg->(sleep => .1);
          $send_msg->('read_pty');
