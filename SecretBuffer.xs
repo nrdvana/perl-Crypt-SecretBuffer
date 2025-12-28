@@ -672,7 +672,9 @@ memcmp(lhs, rhs, reverse=false)
       PERL_UNUSED_VAR(ix);
    CODE:
       RETVAL= memcmp(lhs_buf, rhs_buf, (lhs_len < rhs_len? lhs_len : rhs_len));
-      if (RETVAL == 0 && lhs_len != rhs_len)
+      if (RETVAL < 0) RETVAL= -1;
+      else if (RETVAL > 0) RETVAL= 1;
+      else if (RETVAL == 0 && lhs_len != rhs_len)
          RETVAL= lhs_len < rhs_len? -1 : 1;
       if (reverse)
          RETVAL= -RETVAL;
