@@ -6,8 +6,8 @@ package Crypt::SecretBuffer;
 
   use Crypt::SecretBuffer 'secret';
   $buf= secret;
-  print "Enter your password: ";
-  $buf->append_console_line(STDIN)   # read TTY with echo disabled
+  # read TTY with echo disabled
+  $buf->append_console_line(STDIN, prompt => 'password: ')
     or die "Aborted";
   say $buf;                          # prints "[REDACTED]"
   
@@ -47,8 +47,6 @@ benefit.
 The SecretBuffer is a blessed reference, and the buffer itself is stored in XS in a way that
 the Perl interpreter has no knowledge of.  Any time the buffer needs reallocated, a new buffer
 is allocated, the secret is copied, and the old buffer is wiped clean before freeing it.
-It also guards against timing attacks by copying all the allocated buffer space instead of
-just the length that is occupied by the secret.
 
 The API also provides you with a few ways to read or write the secret, since any read/write code
 implemented directly in Perl would potentially expose your secret to having copies made in
