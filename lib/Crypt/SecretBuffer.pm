@@ -170,6 +170,23 @@ Shorthand function for calling L</new>.
 
 Shorthand function for calling L</new>.
 
+=item span
+
+  $span= span($secret_buffer_or_span_or_scalar, $pos, $len, $encoding);
+  $span= span($secret_buffer_or_span_or_scalar, %attributes);
+
+This is sort of a coercion function that takes the first argument and makes it
+into a buffer of bytes from which a span can be returned.  If the first argument
+is a Span object, the return value is a clone rather than a pass-through.
+The equivalent perl would be roughly:
+
+  my $thing= shift;
+  return $thing->isa('Crypt::SecretBuffer')? $thing->span(@_)
+       : $thing->isa('Crypt::SecretBuffer::Span')? $thing->subspan(@_)
+       : secret($thing)->span(@_);
+
+See L<Crypt::SecretBuffer::Span/new> for a list of attributes.
+
 =item unmask_secrets_to
 
   @ret= unmask_secrets_to \&coderef, $arg1, $arg2, ...;
@@ -262,7 +279,7 @@ Require the match begin at the start of the specified span of the buffer.
 
    use Exporter 'import';
    @Crypt::SecretBuffer::Exports::EXPORT_OK= qw(
-      secret_buffer secret unmask_secrets_to memcmp
+      secret_buffer secret span unmask_secrets_to memcmp
       NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX BASE64
       MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED
    );

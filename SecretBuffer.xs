@@ -994,6 +994,7 @@ new(class_or_obj, ...)
       clone = 1
       subspan = 2
       Crypt::SecretBuffer::span = 3
+      Crypt::SecretBuffer::Exports::span = 4
    INIT:
       secret_buffer_span *span= secret_buffer_span_from_magic(class_or_obj, SECRET_BUFFER_MAGIC_UNDEF_OK);
       SV **buf_field= span && SvTYPE(SvRV(class_or_obj)) == SVt_PVHV
@@ -1002,7 +1003,7 @@ new(class_or_obj, ...)
       secret_buffer *buf= secret_buffer_from_magic(
          buf_field? *buf_field : class_or_obj, SECRET_BUFFER_MAGIC_UNDEF_OK
       );
-      bool subspan= span && ix == 2;
+      bool subspan= span && ix >= 2;
       IV base_pos= subspan? span->pos : 0;
       IV pos=0, lim=0, len=0, base_lim=0;
       int encoding= span? span->encoding : 0, i;
@@ -1050,8 +1051,13 @@ new(class_or_obj, ...)
       if (have_len && have_lim && (lim != pos + len))
          croak("Can't specify both 'len' and 'lim', make up your mind!");
       // buffer is required
-      if (!buf)
-         croak("Require 'buf' attribute");
+      if (!buf) {
+         /* The 'span()' exported function can accept plain scalars and upgrade them to a span object */
+         if (ix != 4)
+            croak("Require 'buf' attribute");
+         buf= secret_buffer_new(0, NULL);
+         secret_buffer_splice_sv(buf, 0, 0, class_or_obj);
+      }
       base_lim= subspan? span->lim : buf->len;
       // pos is relative to base_pos, and needs truncated to (or count backward from) base_lim
       pos= have_pos? normalize_offset(pos, base_lim-base_pos)+base_pos

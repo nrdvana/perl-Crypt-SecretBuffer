@@ -3,8 +3,8 @@ use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
 use Encode qw( encode decode );
 use MIME::Base64;
-use Crypt::SecretBuffer qw( secret UTF8 ISO8859_1 UTF16LE UTF16BE HEX BASE64
-  MATCH_NEGATE MATCH_MULTI );
+use Crypt::SecretBuffer qw( secret span UTF8 ISO8859_1 UTF16LE UTF16BE
+  HEX BASE64 MATCH_NEGATE MATCH_MULTI );
 
 subtest constructors => sub {
    my $buf= secret("abcdef");
@@ -115,6 +115,10 @@ subtest constructors => sub {
          call len => 1;
       },
       'sub-span negative indices relative to parent span';
+
+   is span(secret("AB\xC8\x80"), 2, 2, UTF8)->cmp("\x{200}"), 0, 'span of secret';
+   is span(secret("AB\xC8\x80")->span(1), 1, 2)->cmp("\xC8\x80"), 0, 'span of span';
+   is span("AB\xC8\x80", encoding => UTF8)->cmp("AB\x{200}"), 0, 'span of scalar';
 };
 
 subtest starts_with => sub {
