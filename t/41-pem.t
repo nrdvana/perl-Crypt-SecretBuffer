@@ -92,12 +92,26 @@ qwertyuiopqwertyuiop
 -----END CUSTOM FORMAT-----
 END
 
-   my $pem= Crypt::SecretBuffer::PEM->parse($buf->span);
+   my $pem= Crypt::SecretBuffer::PEM->parse($buf->span, secret_headers => 1);
    is( $pem,
        object {
          call label => 'CUSTOM FORMAT';
          call header_kv => [ 'Param1', span_of_bytes('1'), 'x', span_of_bytes('2') ];
          call headers => { Param1 => span_of_bytes('1'), x => span_of_bytes('2') };
+         call content => object {
+            call [ memcmp => "qwertyuiopqwertyuiop\n" ], 0;
+            call [ cmp => "\xab\x07\xab\xb7\x2b\xa2\xa2\x9a\xb0\x7a\xbb\x72\xba\x2a\x29" ], 0;
+         };
+       },
+       'parse'
+   ) or diag explain $pem;
+
+   $pem= Crypt::SecretBuffer::PEM->parse($buf->span);
+   is( $pem,
+       object {
+         call label => 'CUSTOM FORMAT';
+         call header_kv => [ 'Param1', 1, 'x', 2 ];
+         call headers => { Param1 => 1, x => 2 };
          call content => object {
             call [ memcmp => "qwertyuiopqwertyuiop\n" ], 0;
             call [ cmp => "\xab\x07\xab\xb7\x2b\xa2\xa2\x9a\xb0\x7a\xbb\x72\xba\x2a\x29" ], 0;

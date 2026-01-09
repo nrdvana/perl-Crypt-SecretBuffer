@@ -1,5 +1,7 @@
   - New exportable span() function which universally constructs a span
     from a SecretBuffer, Span object, or plain scalar.
+  - PEM object header values are no longer secrets, by default.
+    (this is a breaking change, but the module has been out less than a month)
 
 Version 0.017 - 2025-12-28
   - New features for append_console_line: char_mask, char_count, char_class

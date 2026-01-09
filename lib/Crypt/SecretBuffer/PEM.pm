@@ -30,7 +30,7 @@ payload remain inside secret Span objects.
 
 =constructor parse
 
-  my $pem= Crypt::SecretBuffer::PEM->parse($span);
+  my $pem= Crypt::SecretBuffer::PEM->parse($span, %options);
 
 Parse the next PEM block found in the L<Span|Crypt::SecretBuffer::Span>.  The span is updated to
 begin on the line following the PEM block.  If no PEM block is found, the span object remains
@@ -39,9 +39,20 @@ unchanged.
 Invalid PEM blocks (such as mismatched BEGIN/END markers) are ignored, as well as any text
 outside of the markers.
 
+Options:
+
+=over
+
+=item secret_headers
+
+Whether the values of the PEM headers should be stored in L<Crypt::SecretBuffer::Span> objects.
+Default is false.
+
+=back
+
 =constructor parse_all
 
-  my @pem_blocks= Crypt::SecretBuffer::PEM->parse_all($span);
+  my @pem_blocks= Crypt::SecretBuffer::PEM->parse_all($span, %options);
 
 A file can contain more than one PEM block (such as a SSL certificate chain, and its key)
 This just calls L</parse> in a loop until no more PEM blocks are found.
@@ -55,7 +66,7 @@ You can construct a PEM object from attributes, in case you want to serialize yo
 =cut
 
 sub parse {
-   my ($class, $span)= @_;
+   my ($class, $span, %options)= @_;
    while (my $begin= $span->scan("-----BEGIN ")) {
       $span->pos($begin->lim);
       my $label= $span->parse(qr/[A-Z0-9 ]+/);
@@ -83,14 +94,19 @@ sub parse {
       my @headers;
       while (my $sep_or_eol= $inner->scan(qr/[:\n]/)) {
          if ($sep_or_eol->starts_with(':')) {
-            my $name;
+            my ($name, $value);
             $inner->clone(lim => $sep_or_eol->pos)->copy_to($name);
             $inner->pos($sep_or_eol->lim);
             my $eol= $inner->scan("\n") or die "BUG"; # inner ends with "\n", checked above
-            my $value= $inner->clone(lim => $eol->pos);
-            $value->ltrim(' '); # remove one optional space character
+            my $val_span= $inner->clone(lim => $eol->pos)
+               ->ltrim(' '); # remove one optional space character following ':'
             $inner->pos($eol->lim);
-            push @headers, $name, $value;
+            if ($options{secret_headers}) {
+               push @headers, $name, $val_span;
+            } else {
+               $val_span->copy_to($value);
+               push @headers, $name, $value;
+            }
          }
          else {
             # If any headers were found, there needs to be a blank line
@@ -116,9 +132,9 @@ sub parse {
 }
 
 sub parse_all {
-   my ($class, $span)= @_;
+   my ($class, $span, %options)= @_;
    my @pem;
-   while (my $pem= $class->parse($span)) {
+   while (my $pem= $class->parse($span, %options)) {
       push @pem, $pem;
    }
    return @pem;
@@ -193,7 +209,7 @@ sub serialize {
    if (@header_kv) {
       while (@header_kv) {
          my ($k, $v)= splice @header_kv, 0, 2;
-         # Sanity checks, key cannot contain control chars or :
+         # Sanity checks, key cannot contain control chars or ':'
          croak "PEM Header name cannot contain ':' or control characters"
             if $k =~ /[\0-\x1F:]/;
          croak "PEM value cannot contain newline"
