@@ -6,7 +6,7 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util qw( blessed );
-use Crypt::SecretBuffer qw/ secret MATCH_NEGATE MATCH_MULTI ISO8859_1 BASE64 /;
+use Crypt::SecretBuffer qw/ secret span MATCH_NEGATE MATCH_MULTI ISO8859_1 BASE64 /;
 
 =head1 SYNOPSIS
 
@@ -218,12 +218,9 @@ sub serialize {
       }
       $out->append("\n"); # empty line terminates headers
    }
-   if ($self->content->encoding == BASE64) {
-      $out->append($self->content);
-   } else {
-      $out->append($self->content->copy(encoding => BASE64));
-   }
-   $out->append('-----END '.$self->label."-----\n");
+   span($self->content)->append_to($out, encoding => BASE64);
+   $out->append(($self->content->length? "\n" : '')
+                .'-----END '.$self->label."-----\n");
    return $out;
 }
 

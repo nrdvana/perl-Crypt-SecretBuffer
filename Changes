@@ -1,7 +1,11 @@
   - New exportable span() function which universally constructs a span
     from a SecretBuffer, Span object, or plain scalar.
   - PEM object header values are no longer secrets, by default.
-    (this is a breaking change, but the module has been out less than a month)
+    This is a breaking change, but the module has been out less than a month.
+  - New method Span->append_to, and normalize Span->copy_to to overwrite.
+    This is a breaking change in that ->copy_to used to append to SecretBuffer
+    but overwrite scalars.  Now copy_to overwrites for both destination types
+    and append_to appends to both destination types.
 
 Version 0.017 - 2025-12-28
   - New features for append_console_line: char_mask, char_count, char_class

@@ -351,7 +351,7 @@ sub parse {
       croak $tokens->{error}
          if defined $tokens->{error};
       if (defined $tokens->{section}) {
-         $tokens->{section}->copy_to($section);
+         $tokens->{section}->copy_to($section= '');
          if (defined $sep) {
             $node= $root;
             for (split $sep, $section) {
@@ -371,7 +371,7 @@ sub parse {
                push @$root, '', ($node= {});
             }
          }
-         $tokens->{key}->copy_to($key);
+         $tokens->{key}->copy_to($key= '');
          if (!$tokens->{value}) {
             $value= undef;
          } else {

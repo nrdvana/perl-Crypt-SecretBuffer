@@ -220,12 +220,15 @@ See L<Crypt::SecretBuffer/Match Flags> for the list of flags.
 
 =method copy_to
 
+=method append_to
+
   $secret= $span->copy(%options);
   $span->copy_to($scalar_or_secret, %options);
+  $span->append_to($scalar_or_secret, %options);
 
-Copy the current span of bytes.  C<copy> returns a new SecretBuffer object.  C<copy_to> writes
-into an existing buffer, which can be either a SecretBuffer or a scalar for non-secrets.  There
-is intentionally I<not> a method to I<return> a scalar, to avoid easily leaking secrets.
+Copy the current span of bytes.  C<copy> returns a new SecretBuffer object.  C<copy_to> replaces
+the content of a SecretBuffer or scalar.  C<append_to> appends to a SecretBuffer or scalar.
+(There is intentionally I<not> a method to I<return> a scalar, to avoid easily leaking secrets)
 
 Options:
 

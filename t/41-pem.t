@@ -34,7 +34,8 @@ END
        'parse'
    ) or diag explain $pem;
 
-   is( $pem->serialize->memcmp($buf), 0, 'serialize' );
+   is( $pem->serialize->memcmp($buf), 0, 'serialize' )
+      or note dump_span($pem->serialize);
 };
 
 # I frequently encounter PEM data where the END marker lacks a newline.

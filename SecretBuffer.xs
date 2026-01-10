@@ -1233,34 +1233,27 @@ scan(self, pattern=NULL, flags= 0)
       }
 
 void
-copy_to(self, ...)
+copy(self, ...)
    SV *self
    ALIAS:
-      copy = 1
+      copy_to = 1
+      append_to = 2
    INIT:
       secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
-      secret_buffer *dst_buf= NULL;
       SV *dst_sv= NULL;
-      SSize_t append_ofs, need_bytes;
-      int next_arg, dst_encoding_req= -1, dst_encoding= -1;
-      secret_buffer_parse src, dst;
+      int next_arg, dst_encoding= -1;
+      secret_buffer_parse src;
       if (!secret_buffer_parse_init_from_sv(&src, self))
          croak("%s", src.error);
    PPCODE:
-      if (ix == 0) {
-         if (items >= 2) {
-            if (sv_isobject(ST(1))) // if object, must be a SecretBuffer
-               dst_buf= secret_buffer_from_magic(ST(1), SECRET_BUFFER_MAGIC_OR_DIE);
-            else if (SvROK(ST(1)) && !SvROK(SvRV(ST(1)))) // Scalar-ref
-               dst_sv= SvRV(ST(1));
-            else if (!SvROK(ST(1))) // any plain non-ref scalar
-               dst_sv= ST(1);
-         }
-         if (!dst_sv && !dst_buf)
-            croak("copy_to destination buffer must be an empty scalar, scalar-ref, or a SecretBuffer instance");
+      if (ix > 0) { /* called as 'copy_to' or 'append_to' */
+         if (items < 2)
+            croak("Missing copy/append destination");
+         dst_sv= ST(1);
          next_arg= 2;
       }
-      else {
+      else { /* called as 'copy' */
+         secret_buffer_new(0, &dst_sv);
          next_arg= 1;
       }
       
@@ -1269,45 +1262,15 @@ copy_to(self, ...)
          croak("expected even-length list of (key => val)");
       for (; next_arg < items; next_arg+= 2) {
          if (0 == strcmp(SvPV_nolen(ST(next_arg)), "encoding")) {
-            if (!parse_encoding(aTHX_ ST(next_arg+1), &dst_encoding_req))
+            if (!parse_encoding(aTHX_ ST(next_arg+1), &dst_encoding))
                croak("Unknown encoding");
          }
       }
-      // Even when copying to a SV, write the buf first and then "sv_setpvn_mg"
-      // in order to deal with magic conveniently.
-      if (!dst_buf)
-         dst_buf= secret_buffer_new(0, NULL);
-      // Determine the actual destination encoding
-      if (dst_encoding_req >= 0)
-         dst_encoding= dst_encoding_req;
-      // if dest is an SV and src is a type of unicode, and destination encoding was not
-      //  specified, export as utf-8 for perl wide chars.
-      else if (dst_sv && SECRET_BUFFER_ENCODING_IS_UNICODE(span->encoding))
-         dst_encoding= SECRET_BUFFER_ENCODING_UTF8;
-      else
-         dst_encoding= span->encoding;
-
-      need_bytes= secret_buffer_sizeof_transcode(&src, dst_encoding);
-      if (need_bytes < 0)
-         croak("transcode sizeof failed: %s", src.error);
-      append_ofs= dst_buf->len;
-      secret_buffer_set_len(dst_buf, dst_buf->len + need_bytes);
-      if (!secret_buffer_parse_init(&dst, dst_buf, append_ofs, append_ofs+need_bytes, dst_encoding))
-         croak("%s", dst.error);
-      if (!secret_buffer_transcode(&src, &dst))
-         croak("transcode failed: %s", src.error? src.error : dst.error);
-      // If the output was actually a SV, assign that now
-      if (dst_sv) {
-         sv_setpvn_mg(dst_sv, dst_buf->len? dst_buf->data : "", dst_buf->len);
-         // and if no encoding was requested, upgrade to wide characters
-         if (dst_encoding == SECRET_BUFFER_ENCODING_UTF8 && dst_encoding_req < 0)
-            SvUTF8_on(dst_sv);
-         else // setpvn_mg does not change the utf8 flag, so make sure it is off
-            SvUTF8_off(dst_sv);
-      }
+      if (!secret_buffer_copy_to(&src, dst_sv, dst_encoding, ix == 2))
+         croak("copy failed: %s", src.error);
       // copy returns the SecretBuffer, but copy_to returns empty list.
-      if (ix == 1)
-         PUSHs(sv_2mortal(newRV_inc(dst_buf->wrapper)));
+      if (ix == 0)
+         PUSHs(dst_sv);
 
 IV
 cmp(lhs, rhs, reverse=false)

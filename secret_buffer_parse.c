@@ -334,6 +334,86 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse *dst)
    return true;
 }
 
+bool
+secret_buffer_copy_to(secret_buffer_parse *src, SV *dst_sv, int encoding, bool append) {
+   dTHX;
+   secret_buffer_parse dst;
+   secret_buffer *dst_sbuf= NULL;
+   SSize_t need_bytes;
+   bool dst_wide= false;
+
+   Zero(&dst, 1, secret_buffer_parse);
+   // Encoding may be -1 to indicate the user didn't specify, in which case we use the
+   // same encoding as the source, unless the destination is a perl scalar (handled below)
+   dst.encoding= encoding >= 0? encoding : src->encoding;
+   if (sv_isobject(dst_sv)) {
+      // if object, must be a SecretBuffer
+      dst_sbuf= secret_buffer_from_magic(dst_sv, SECRET_BUFFER_MAGIC_OR_DIE);
+   }
+   else {
+      // Going to overwrite the scalar, or if its a scalar-ref, overwrite that.
+      if (SvROK(dst_sv) && !sv_isobject(dst_sv) && SvTYPE(SvRV(dst_sv)) <= SVt_PVMG)
+         dst_sv= SvRV(dst_sv);
+      // Refuse to overwrite any other kind of ref
+      if (SvTYPE(dst_sv) > SVt_PVMG || SvROK(dst_sv)) {
+         src->error= "Can only copy_to scalars or scalar-refs";
+         return false;
+      }
+      // If the source encoding is a type of unicode, and the destination encoding is not
+      // specified, then write wide characters (utf-8) to the perl scalar and flag it as utf8
+      if (encoding < 0 && SECRET_BUFFER_ENCODING_IS_UNICODE(src->encoding)) {
+         dst.encoding= SECRET_BUFFER_ENCODING_UTF8;
+         dst_wide= true;
+      }
+   }
+   // Determine how many bytes we need
+   need_bytes= secret_buffer_sizeof_transcode(src, dst.encoding);
+   if (need_bytes < 0)
+      return false;
+   // Prepare the buffers for that many bytes
+   if (dst_sbuf) {
+      // For destination SecretBuffer, set length to 0 unless appending, then
+      // ensure enough allocated space for need_bytes, then transcode and update
+      // the length in the block below.
+      if (!append)
+         secret_buffer_set_len(dst_sbuf, 0); /* clears secrets */
+      secret_buffer_alloc_at_least(dst_sbuf, dst_sbuf->len + need_bytes);
+      dst.pos= dst_sbuf->data + dst_sbuf->len;
+      dst.lim= dst.pos + need_bytes;
+   }
+   else {
+      // For destination SV, set length to 0 unless appending, then force it to
+      // be bytes or utf-8, then grow it to ensure room for additional `need_bytes`.
+      STRLEN len;
+      char *pv;
+      // If overwriting, set the length to 0 before forcing to bytes or utf8
+      if (!append)
+         sv_setpvn(dst_sv, "", 0);
+      // force it to the type required
+      if (dst_wide) SvPVutf8(dst_sv, len);
+      else SvPVbyte(dst_sv, len);
+      // grow it to the required length, for writing
+      sv_grow(dst_sv, (append? len : 0) + need_bytes + 1);
+      dst.pos= SvPVX_mutable(dst_sv) + len;
+      dst.lim= dst.pos + need_bytes;
+      // don't forget the NUL terminator
+      *dst.lim= '\0';
+   }
+   if (!secret_buffer_transcode(src, &dst)) {
+      if (!src->error) src->error= dst.error;
+      return false;
+   }
+   /* update the lengths */
+   if (dst_sbuf) {
+      dst_sbuf->len += need_bytes;
+   }
+   else {
+      SvCUR_set(dst_sv, SvCUR(dst_sv) + need_bytes);
+      SvSETMAGIC(dst_sv);
+   }
+   return true;
+}
+
 /* Private API -------------------------------------------------------------*/
 
 /* Scan raw bytes using only the bitmap */
