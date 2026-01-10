@@ -17,7 +17,7 @@ is \%Crypt::SecretBuffer::C_API,
       secret_buffer_charset_test_byte =>
          'bool secret_buffer_charset_test_byte(const secret_buffer_charset *cset, U8 b)',
       secret_buffer_charset_test_codepoint =>
-         'bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, uint32_t cp)',
+         'bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, U32 cp)',
       secret_buffer_parse_init =>
          'bool secret_buffer_parse_init(secret_buffer_parse *parse, secret_buffer *buf, size_t pos, size_t lim, int encoding)',
       secret_buffer_parse_init_from_sv =>

@@ -10,8 +10,8 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse);
 static bool sb_parse_encode_codepoint(secret_buffer_parse *parse, int codepoint);
 static bool sb_parse_match_charset_bytes(secret_buffer_parse *parse, const secret_buffer_charset *cset, int flags);
 static bool sb_parse_match_charset_codepoints(secret_buffer_parse *parse, const secret_buffer_charset *cset, int flags);
-static bool sb_parse_match_str_U8(secret_buffer_parse *parse, const U8 *pattern, int pattern_len, int flags);
-static bool sb_parse_match_str_I32(secret_buffer_parse *parse, const I32 *pattern, int pattern_len, int flags);
+static bool sb_parse_match_str_U8(secret_buffer_parse *parse, const U8 *pattern, size_t pattern_len, int flags);
+static bool sb_parse_match_str_I32(secret_buffer_parse *parse, const I32 *pattern, size_t pattern_len, int flags);
 
 static bool parse_encoding(pTHX_ SV *sv, int *out) {
    int enc;
