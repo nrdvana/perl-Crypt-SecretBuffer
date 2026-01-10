@@ -36,7 +36,7 @@ extern bool secret_buffer_charset_test_byte(const secret_buffer_charset *cset, U
 /* Test whether the charset contains a unicode character.  This uses the perl regex
  * engine if the codepoint is higher than 0x7F, to ensure correct matching.
  */
-extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, uint32_t cp);
+extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cset, U32 cp);
 
 /* encoding flags can be combined with other flags */
 #define SECRET_BUFFER_ENCODING_MASK      0xFF

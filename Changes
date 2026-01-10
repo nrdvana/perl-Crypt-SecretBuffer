@@ -6,6 +6,10 @@
     This is a breaking change in that ->copy_to used to append to SecretBuffer
     but overwrite scalars.  Now copy_to overwrites for both destination types
     and append_to appends to both destination types.
+  - Change type of secret_buffer_charset_test_codepoint codepoint from `uint32_t`
+    to `U32` so that users of Inline aren't forced to `#include <stdint.h>`
+    This is a breaking change for any C code which was looking up the function by
+    name in the %C_API hash, but the ABI is unchanged.
 
 Version 0.017 - 2025-12-28
   - New features for append_console_line: char_mask, char_count, char_class
