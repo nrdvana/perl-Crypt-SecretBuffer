@@ -162,16 +162,17 @@ Only remove from the end of the Span
 
 =back
 
-=method set_up_us_the_bom
+=method consume_bom
 
   # On a buffer which may begin with a BOM:
-  $something->set_up_us_the_bom->cmp("All your base");
+  $span->consume_bom->cmp("\x{100}");
 
 Look for an optional L<Byte-Order-Mark|https://en.wikipedia.org/wiki/Byte_order_mark> at the
 start of the span, and if found, change the encoding and advance the span start to the next
 character.
 
   First bytes       Encoding
+  -----------       --------
   FE FF             UTF16BE
   FF FE             UTF16LE
   EF BB BF          UTF8
@@ -185,9 +186,9 @@ need to use L</copy> to create a new SecretBuffer of raw bytes, then decode the 
 
 =over
 
-=item consume_bom
+=item set_up_us_the_bom
 
-Provided as an alias, for anyone too embarrassed to put Zero Wing jokes in their code.
+Provided as an alias, for fun.
 
 =back
 
