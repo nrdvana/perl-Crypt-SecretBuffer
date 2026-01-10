@@ -118,7 +118,8 @@ extern bool secret_buffer_copy_to(secret_buffer_parse *src, SV *dst_sv, int enco
  * FREETMPS destroys the ref which destroys the object which destroys the magic which destroys
  * the secret_buffer struct which also clears it.
  * If you supply a pointer to receive ref_out, you can then increment the refcount or copy the
- * ref to a new SV if you want to keep the object.
+ * ref to a new SV if you want to keep the object.  As a weak-ref, it's also convenient to push
+ * onto perl's stack.
  * Always returns a secret_buffer, or croaks on failure.
  */
 extern secret_buffer * secret_buffer_new(size_t capacity, SV **ref_out);

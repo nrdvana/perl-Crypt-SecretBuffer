@@ -21,6 +21,10 @@ INPUT
 O_SECRET_BUFFER
    $var= secret_buffer_from_magic($arg, SECRET_BUFFER_MAGIC_OR_DIE @{[ $type =~ /^maybe/? q{| SECRET_BUFFER_MAGIC_UNDEF_OK} : $type =~ /^auto/? q{| SECRET_BUFFER_MAGIC_AUTOCREATE} : q{} ]});
 
+OUTPUT
+O_SECRET_BUFFER
+   sv_setrv_inc($arg, ($var)->wrapper);
+
 INPUT
 O_SECRET_BUFFER_CHARSET
    $var= secret_buffer_charset_from_regexpref($arg);
