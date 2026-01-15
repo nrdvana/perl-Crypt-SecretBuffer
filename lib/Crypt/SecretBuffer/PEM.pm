@@ -210,16 +210,19 @@ sub serialize {
       while (@header_kv) {
          my ($k, $v)= splice @header_kv, 0, 2;
          # Sanity checks, key cannot contain control chars or ':'
-         croak "PEM Header name cannot contain ':' or control characters"
+         croak "PEM Header name '$k' contains ':' or control characters"
             if $k =~ /[\0-\x1F:]/;
-         croak "PEM value cannot contain newline"
+         croak "PEM header value for '$k' must be defined"
+            unless defined $v;
+         croak "PEM header value for '$k' contains a newline"
             if blessed($v) && $v->can('scan')? $v->scan("\n") : $v =~ /\n/;
          $out->append("$k: ")->append($v)->append("\n");
       }
       $out->append("\n"); # empty line terminates headers
    }
-   span($self->content)->append_to($out, encoding => BASE64);
-   $out->append(($self->content->length? "\n" : '')
+   my $content_span= span($self->content);
+   $content_span->append_to($out, encoding => BASE64);
+   $out->append(($content_span->length? "\n" : '')
                 .'-----END '.$self->label."-----\n");
    return $out;
 }

@@ -123,6 +123,11 @@ END
 
    is( $pem->serialize->memcmp($canonical), 0, 'serialize' )
       or diag dump_span($pem->serialize);
+   # Try again with nonsecret content
+   $pem->content("\xab\x07\xab\xb7\x2b\xa2\xa2\x9a\xb0\x7a\xbb\x72\xba\x2a\x29");
+   $pem->header_kv->[1]= '1';
+   is( $pem->serialize->memcmp($canonical), 0, 'serialize' )
+      or diag dump_span($pem->serialize);
 };
 
 subtest mutiple_pem_blocks => sub {
