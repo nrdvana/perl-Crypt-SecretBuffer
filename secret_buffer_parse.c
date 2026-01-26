@@ -58,6 +58,7 @@ bool secret_buffer_parse_init(secret_buffer_parse *parse,
    parse->pos= ((U8*) buf->data) + pos;
    parse->lim= ((U8*) buf->data) + lim;
    parse->encoding= encoding;
+   parse->sbuf= buf;
    return true;
 }
 

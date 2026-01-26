@@ -34,6 +34,10 @@ is \%Crypt::SecretBuffer::C_API,
          'bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse *dst)',
       secret_buffer_copy_to =>
          'bool secret_buffer_copy_to(secret_buffer_parse *src, SV *dst_sv, int encoding, bool append)',
+      secret_buffer_span_new_obj =>
+         'SV * secret_buffer_span_new_obj(secret_buffer *buf, size_t pos, size_t lim, int encoding)',
+      secret_buffer_span_new_obj_from_parse =>
+         'SV * secret_buffer_span_new_obj_from_parse(secret_buffer_parse *p)',
       secret_buffer_new =>
          'secret_buffer * secret_buffer_new(size_t capacity, SV **ref_out)',
       secret_buffer_from_magic =>

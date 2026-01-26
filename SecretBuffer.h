@@ -56,11 +56,17 @@ extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cs
    || (x) == SECRET_BUFFER_ENCODING_ISO8859_1 \
    )
 
+/* secret_buffer_parse struct is used as a generic way to support parsing on whole
+ * secret_buffers or on spans within one, or even a span within a perl SV.
+ * Crypt::SecretBuffer::Span does not have a public struct for now, but can be
+ * used to initialize a parse struct using secret_buffer_parse_init_from_sv.
+ */
 typedef struct {
    U8 *pos, *lim;
    const char *error;
    int encoding;
    U8 pos_bit, lim_bit;
+   secret_buffer *sbuf; /* may be NULL when referencing a span from a plain PV */
 } secret_buffer_parse;
 
 /* Initialize a parse struct, and also verify that the described span is within the
@@ -72,6 +78,15 @@ extern bool secret_buffer_parse_init(secret_buffer_parse *parse,
 /* Initialize a parse struct, either from a Span, or a SecretBuffer, or a plain Scalar.
  */
 extern bool secret_buffer_parse_init_from_sv(secret_buffer_parse *parse, SV *sv);
+
+/* Create a Crypt::SecretBuffer::Span object, returning a mortal ref */
+extern SV * secret_buffer_span_new_obj(secret_buffer *buf, size_t pos, size_t lim, int encoding);
+
+/* Create a Crypt::SecretBuffer::Span object for the specified span of a SecretBuffer
+ * and return a mortal ref to that object.  The parse struct 'sbuf' field must not be NULL
+ * because the span needs to hold a reference to it.
+ */
+extern SV * secret_buffer_span_new_obj_from_parse(secret_buffer_parse *p);
 
 /* Scan through a SecretBuffer looking for the first (and maybe also last)
  * character belonging to a set.  The 'pos' and 'lim' of the parse struct
