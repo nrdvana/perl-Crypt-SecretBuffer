@@ -415,6 +415,186 @@ secret_buffer_copy_to(secret_buffer_parse *src, SV *dst_sv, int encoding, bool a
    return true;
 }
 
+/* Append DER length octets (ASN.1 Length field, definite form only).
+ *
+ * DER rules:
+ *  - If len <= 127: single byte [0x00..0x7F]
+ *  - Else: first byte is 0x80 | N, where N is # of following length bytes (big-endian),
+ *          and the length must be encoded in the minimal number of bytes (no leading 0x00).
+ *
+ * This function encodes ONLY the length field (not tag/value).
+ */
+void
+secret_buffer_append_uv_asn1_der(secret_buffer *buf, UV val) {
+   dTHX;
+   int enc_len = 1;
+   U8 *pos;
+   if (val > 127) {
+      /* Determine minimal number of bytes needed to represent len in base-256. */
+      UV tmp = val;
+      while (tmp) {
+         enc_len++;
+         tmp >>= 8;
+      }
+   }
+   /* In BER/DER, the long-form initial octet has 7 bits of length-of-length.
+    * 0x80 is indefinite length (forbidden in DER), 0xFF would mean 127 length bytes.
+    * With 64-bit UV enc_len will never exceed 9.
+    */
+   ASSUME(enc_len < 127);
+   secret_buffer_set_len(buf, buf->len + enc_len);
+   pos= buf->data + buf->len - 1;
+   if (val <= 127) {
+      *pos = (U8) val;
+   } else {
+      UV tmp = val;
+      /* Write the length big-endian into enc[1..n]. */
+      while (tmp) {
+         *pos-- = (U8)(tmp & 0xFF);
+         tmp >>= 8;
+      }
+      *pos= (U8) (0x80 | (U8)(enc_len-1));
+   }
+}
+
+/* Parse ASN.1 DER Length (definite form only) */
+bool
+secret_buffer_parse_uv_asn1_der(secret_buffer_parse *parse, UV *out) {
+   /* Work on a local cursor so we can roll back on failure */
+   U8 *pos = parse->pos;
+   U8 *lim = parse->lim;
+   UV result;
+   int n;
+
+   if (pos >= lim) {
+      parse->error = "unexpected end of buffer";
+      return false;
+   }
+
+   result = *pos++;
+
+   /* If 0..127, the byte is the length value itself, otherwise it is the number of octets
+    * to read following that byte. */
+   if ((result & 0x80)) {
+      int n = result & 0x7F;
+      /* 0x80 means indefinite length (BER/CER), forbidden in DER */
+      if (n == 0) {
+         parse->error = "ASN.1 DER indefinite length not allowed";
+         return false;
+      }
+      /* Number of octets should be smallest possible encoding, so if it is larger than size_t
+       * don't even bother trying to decode it.
+       */
+      if (n > sizeof(UV)) {
+         parse->error = "ASN.1 DER length too large for perl UV";
+         return false;
+      }
+      /* ensure we have that many bytes */
+      if ((size_t)(lim - pos) < (size_t)n) {
+         parse->error = "unexpected end of buffer";
+         return false;
+      }
+      /* DER minimal encoding rules:
+       * - no leading 0x00 in the length octets
+       * - long form must not be used for lengths <= 127
+       */
+      result= *pos;
+      if (!result) {
+         parse->error = "ASN.1 DER length has leading zero (non-minimal)";
+         return false;
+      }
+      /* Parse remaining bytes of big-endian unsigned integer */
+      lim= pos + n;
+      while (pos < lim)
+         result= (result << 8) | *pos++;
+      /* DER should not use 1-byte encoding if it would have fit in the initial byte */
+      if (result < 0x80) {
+         parse->error = "ASN.1 DER length should use short form (non-minimal)";
+         return false;
+      }
+   }
+   if (out) *out = result;
+   parse->pos = pos;
+   parse->error = NULL;
+   return true;
+}
+
+/* Append canonical Unsigned LittleEndian Base128
+ *
+ * Rules:
+ *  - 7 data bits per byte, little-endian (least significant group first)
+ *  - High bit 0x80 set on all bytes except the final byte
+ *  - Canonical/minimal: stop as soon as remaining value is 0
+ */
+void
+secret_buffer_append_uv_leb128(secret_buffer *buf, UV val) {
+   dTHX;
+   U8 *pos;
+   int enc_len= 1;
+   UV tmp= val >> 7;
+   while (tmp) {
+      enc_len++;
+      tmp >>= 7;
+   }
+   secret_buffer_set_len(buf, buf->len + enc_len);
+   pos= buf->data + buf->len - enc_len;
+   /* Encode */
+   tmp= val;
+   do {
+      U8 byte = (U8)(tmp & 0x7F);
+      tmp >>= 7;
+      if (tmp)
+         byte |= 0x80;
+      *pos++ = byte;
+   } while (tmp);
+   ASSUME(pos == (U8*)(buf->data + buf->len));
+}
+
+/* Parse Unsigned LittleEndian Base128 (also requiring canonical / minimal encoding) */
+bool
+secret_buffer_parse_uv_leb128(secret_buffer_parse *parse, UV *out) {
+   U8 *pos = parse->pos;
+   U8 *lim = parse->lim;
+   UV result= 0;
+   int shift= 0;
+
+   /* Scan forward looking for the first byte without the continuation flag */
+   while (1) {
+      UV payload;
+      bool cont;
+
+      if (pos >= lim) {
+         parse->error = "unexpected end of buffer";
+         return false;
+      }
+      payload= *pos & 0x7F;
+      cont= *pos & 0x80;
+      pos++;
+      if (shift > sizeof(UV)*8 - 7) {
+         int avail_bits= sizeof(UV)*8 - shift;
+         /* Do any of the bits overflow? Is the continuation flag set? */
+         if ((payload >> avail_bits) || cont) {
+            parse->error = "LEB128 value overflows perl UV";
+            return false;
+         }
+      }
+      result |= payload << shift;
+      shift += 7;
+      if (!cont) {
+         /* check if the high bits were all zero, meaning an unnecessary byte was encoded */
+         if (!payload && result != 0) {
+            parse->error = "Over-long encoding of LEB128";
+            return false;
+         }
+         break;
+      }
+   }
+   if (out) *out = result;
+   parse->pos = pos;
+   parse->error = NULL;
+   return true;
+}
+
 /* Private API -------------------------------------------------------------*/
 
 /* Scan raw bytes using only the bitmap */

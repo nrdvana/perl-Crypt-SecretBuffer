@@ -171,6 +171,19 @@ extern void secret_buffer_alloc_at_least(secret_buffer *buf, size_t min_capacity
  */
 extern void secret_buffer_set_len(secret_buffer *buf, size_t new_len);
 
+/* Encode/decode a variable-length integer using the DER encoding of ASN.1
+ * (this is not a full ASN.1 element, just the length piece)
+ */
+extern void secret_buffer_append_uv_asn1_der(secret_buffer *buf, UV val);
+extern bool secret_buffer_parse_uv_asn1_der(secret_buffer_parse *parse, UV *out);
+
+/* Encode/decode a variable-length integer using Unsigned LittleEndian Base128
+ * (using high-bit of each byte as a continuation flag)
+ * as seen in ProtocolBuffers and other formats.
+ */
+extern void secret_buffer_append_uv_leb128(secret_buffer *buf, UV val);
+extern bool secret_buffer_parse_uv_leb128(secret_buffer_parse *parse, UV *out);
+
 /* Overwrite a span of the buffer with the supplied bytes.  The buffer length is updated
  * to match.  Offset and length are unsigned, so they do not support the "negative from end of
  * buffer" convention common to Perl.
