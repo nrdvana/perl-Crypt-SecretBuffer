@@ -425,7 +425,7 @@ secret_buffer_copy_to(secret_buffer_parse *src, SV *dst_sv, int encoding, bool a
  * This function encodes ONLY the length field (not tag/value).
  */
 void
-secret_buffer_append_uv_asn1_der(secret_buffer *buf, UV val) {
+secret_buffer_append_uv_asn1_der_length(secret_buffer *buf, UV val) {
    dTHX;
    int enc_len = 1;
    U8 *pos;
@@ -459,7 +459,7 @@ secret_buffer_append_uv_asn1_der(secret_buffer *buf, UV val) {
 
 /* Parse ASN.1 DER Length (definite form only) */
 bool
-secret_buffer_parse_uv_asn1_der(secret_buffer_parse *parse, UV *out) {
+secret_buffer_parse_uv_asn1_der_length(secret_buffer_parse *parse, UV *out) {
    /* Work on a local cursor so we can roll back on failure */
    U8 *pos = parse->pos;
    U8 *lim = parse->lim;
@@ -498,13 +498,13 @@ secret_buffer_parse_uv_asn1_der(secret_buffer_parse *parse, UV *out) {
        * - no leading 0x00 in the length octets
        * - long form must not be used for lengths <= 127
        */
-      result= *pos;
+      lim= pos + n;
+      result= *pos++;
       if (!result) {
          parse->error = "ASN.1 DER length has leading zero (non-minimal)";
          return false;
       }
       /* Parse remaining bytes of big-endian unsigned integer */
-      lim= pos + n;
       while (pos < lim)
          result= (result << 8) | *pos++;
       /* DER should not use 1-byte encoding if it would have fit in the initial byte */
@@ -519,7 +519,7 @@ secret_buffer_parse_uv_asn1_der(secret_buffer_parse *parse, UV *out) {
    return true;
 }
 
-/* Append canonical Unsigned LittleEndian Base128
+/* Append canonical unsigned Base128, Little-Endian
  *
  * Rules:
  *  - 7 data bits per byte, little-endian (least significant group first)
@@ -527,7 +527,7 @@ secret_buffer_parse_uv_asn1_der(secret_buffer_parse *parse, UV *out) {
  *  - Canonical/minimal: stop as soon as remaining value is 0
  */
 void
-secret_buffer_append_uv_leb128(secret_buffer *buf, UV val) {
+secret_buffer_append_uv_base128le(secret_buffer *buf, UV val) {
    dTHX;
    U8 *pos;
    int enc_len= 1;
@@ -552,42 +552,103 @@ secret_buffer_append_uv_leb128(secret_buffer *buf, UV val) {
 
 /* Parse Unsigned LittleEndian Base128 (also requiring canonical / minimal encoding) */
 bool
-secret_buffer_parse_uv_leb128(secret_buffer_parse *parse, UV *out) {
+secret_buffer_parse_uv_base128le(secret_buffer_parse *parse, UV *out) {
    U8 *pos = parse->pos;
    U8 *lim = parse->lim;
-   UV result= 0;
-   int shift= 0;
+   UV result= 0, payload;
+   int shift= 7;
 
+   if (pos >= lim) {
+      parse->error = "unexpected end of buffer";
+      return false;
+   }
+   result= payload= *pos & 0x7F;
    /* Scan forward looking for the first byte without the continuation flag */
-   while (1) {
-      UV payload;
-      bool cont;
-
+   while (*pos++ & 0x80) {
       if (pos >= lim) {
          parse->error = "unexpected end of buffer";
          return false;
       }
       payload= *pos & 0x7F;
-      cont= *pos & 0x80;
-      pos++;
       if (shift > sizeof(UV)*8 - 7) {
-         int avail_bits= sizeof(UV)*8 - shift;
          /* Do any of the bits overflow? Is the continuation flag set? */
-         if ((payload >> avail_bits) || cont) {
-            parse->error = "LEB128 value overflows perl UV";
+         if (shift >= sizeof(UV)*8 || (payload >> (sizeof(UV)*8 - shift))) {
+            parse->error = "Base128-LE value overflows perl UV";
             return false;
          }
       }
       result |= payload << shift;
       shift += 7;
-      if (!cont) {
-         /* check if the high bits were all zero, meaning an unnecessary byte was encoded */
-         if (!payload && result != 0) {
-            parse->error = "Over-long encoding of LEB128";
-            return false;
-         }
-         break;
+   }
+   /* check if the high bits were all zero, meaning an unnecessary byte was encoded */
+   if (!payload && result != 0) {
+      parse->error = "Over-long encoding of Base128-LE";
+      return false;
+   }
+   if (out) *out = result;
+   parse->pos = pos;
+   parse->error = NULL;
+   return true;
+}
+
+/* Append canonical unsigned Base128, Big-Endian
+ *
+ * Rules:
+ *  - 7 data bits per byte, big-endian (most significant group first)
+ *  - High bit 0x80 set on all bytes except the final byte
+ *  - Canonical/minimal: stop as soon as remaining value is 0
+ */
+void
+secret_buffer_append_uv_base128be(secret_buffer *buf, UV val) {
+   dTHX;
+   U8 *pos;
+   int enc_len= 1, shift;
+   UV tmp= val >> 7;
+   while (tmp) {
+      enc_len++;
+      tmp >>= 7;
+   }
+   secret_buffer_set_len(buf, buf->len + enc_len);
+   pos= buf->data + buf->len - enc_len;
+   /* Encode */
+   for (shift= (enc_len-1) * 7; shift >= 0; shift -= 7) {
+      U8 byte = (U8)((val >> shift) & 0x7F);
+      if (shift)
+         byte |= 0x80;
+      *pos++ = byte;
+   }
+   ASSUME(pos == (U8*)(buf->data + buf->len));
+}
+
+/* Parse Unsigned BigEndian Base128 (also requiring canonical / minimal encoding) */
+bool
+secret_buffer_parse_uv_base128be(secret_buffer_parse *parse, UV *out) {
+   U8 *pos = parse->pos;
+   U8 *lim = parse->lim;
+   UV result= 0;
+   int shift= 0;
+
+   if (pos >= lim) {
+      parse->error = "unexpected end of buffer";
+      return false;
+   }
+   /* high-bit payload == 0 with continue bit set is an error. */
+   if (*pos == 0x80) {
+      parse->error = "Over-long encoding of Base128-BE";
+      return false;
+   }
+   result= *pos & 0x7F;
+   while (*pos++ & 0x80) {
+      /* Will existing bits overflow UV when shifted? */
+      if (result >> (sizeof(UV)*8 - 7)) {
+         parse->error = "Base128-BE value overflows perl UV";
+         return false;
       }
+      if (pos >= lim) {
+         parse->error = "unexpected end of buffer";
+         return false;
+      }
+      result= (result << 7) | (*pos & 0x7F);
    }
    if (out) *out = result;
    parse->pos = pos;

@@ -162,6 +162,43 @@ Only remove from the end of the Span
 
 =back
 
+=method parse_lenprefixed
+
+  $span= $span->parse_lenprefixed($type=BASE128BE, \$err_out);
+
+Parse a length-prefixed span from the start of this span, updating C<pos> if the variable-length
+is valid and at least that many bytes follow it.  On failure, return C<undef> and set C<$err_out>
+if provided.
+
+The following lower-level methods can be used to parse just the variable-length integer formats:
+
+=over
+
+=item parse_base128be
+
+  $len= $span->parse_base128be;
+  $len= $span->parse_base128be(\$err_out);
+
+Parse a big-endian base128 encoding where the high-bit indicates continuation, same as
+C<< unpack 'w' >>.
+
+=item parse_base128le
+
+  $len= $span->parse_base128le;
+  $len= $span->parse_base128le(\$err_out);
+
+Parse a little-endian base128 encoding where the high-bit indicates continuation, such as used
+by Google Protocol Buffers.
+
+=item parse_asn1_der_length
+
+  $len= $span->parse_asn1_der_length;
+  $len= $span->parse_asn1_der_length(\$err_out);
+
+Parse the variable-length integer used by ASN.1 DER encoding for the length of an element.
+
+=back
+
 =method consume_bom
 
   # On a buffer which may begin with a BOM:

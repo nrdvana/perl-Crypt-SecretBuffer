@@ -2,6 +2,12 @@
     from a SecretBuffer, Span object, or plain scalar.
   - PEM object header values are no longer secrets, by default.
     This is a breaking change, but the module has been out less than a month.
+  - New methods to encode and decode variable-length integers and
+    length-prefixed strings:
+     - append_lenprefixed     / parse_lenprefixed
+     - append_base128le       / parse_base128le
+     - append_base128be       / parse_base128be
+     - append_asn1_der_length / parse_asn1_der_length
   - New method Span->append_to, and normalize Span->copy_to to overwrite.
     This is a breaking change in that ->copy_to used to append to SecretBuffer
     but overwrite scalars.  Now copy_to overwrites for both destination types

@@ -62,6 +62,50 @@ static SV * make_enum_dualvar(pTHX_ IV ival, SV *name) {
    return name;
 }
 
+/* Return an SV* vector of an AV or arrayref.
+ * Returns NULL if it wasn't an AV or arrayref.
+ * The return value is either the underlying vector of the AV,
+ * or an allocated vector which will be freed automatically.
+ * The vector could be destroyed if you modify the AV!
+ * The returned SVs may still have get/set magic.
+ */
+static SV** unwrap_array(SV *array, IV *len) {
+  AV *av;
+  SV **vec;
+  IV n;
+  if (array && SvTYPE(array) == SVt_PVAV)
+    av= (AV*) array;
+  else if (array && SvROK(array) && SvTYPE(SvRV(array)) == SVt_PVAV)
+    av= (AV*) SvRV(array);
+  else {
+    *len= 0;
+    return NULL;
+  }
+  n= av_len(av) + 1;
+  vec= AvARRAY(av);
+  /* tied arrays and non-allocated empty arrays return NULL */
+  if (!vec) {
+    if (n == 0)
+      /* don't return a NULL (false) for an empty array,
+       * but doesn't need to be a real pointer
+       * as long as caller respects len==0 */
+      vec= (SV**) 1;
+    else {
+      /* in case of a tied array, extract the elements
+       * into a temporary buffer, freed later by perl */
+      IV i;
+      Newx(vec, n, SV*);
+      SAVEFREEPV(vec);
+      for (i= 0; i < n; i++) {
+        SV **el= av_fetch(av, i, 0);
+        vec[i]= el? *el : NULL;
+      }
+    }
+  }
+  *len= n;
+  return vec;
+}
+
 /**********************************************************************************************\
 * Platform compatibility stuff
 \**********************************************************************************************/
@@ -376,9 +420,31 @@ static IV parse_alloc_flags(pTHX_ SV *sv) {
    croak("Unknown flag %s", SvPV_nolen(sv));
 }
 
+/* encoding-type for Span->parse_lenprefixed */
+#define BASE128LE       1
+#define BASE128BE       2
+#define ASN1_DER_LENGTH 3
+
+static IV parse_lenprefixed_type(pTHX_ SV *sv) {
+   if (sv && SvIOK(sv)) {
+      IV val= SvIV(sv);
+      if (val < 1 || val > 3)
+         croak("Unknown encoding type %ld", (long)val);
+      return val;
+   } else if (sv && SvOK(sv)) {
+      STRLEN len;
+      const char *str= SvPV(sv, len);
+      if (strcmp(str, "BASE128LE") == 0) return BASE128LE;
+      if (strcmp(str, "BASE128BE") == 0) return BASE128BE;
+      if (strcmp(str, "ASN1_DER_LENGTH") == 0) return ASN1_DER_LENGTH;
+      croak("Unknown encoding type '%s'", str);
+   }
+}
+
 /* for typemap to automatically convert flags */
 typedef int secret_buffer_io_flags;
 typedef int secret_buffer_alloc_flags;
+typedef int secret_buffer_lenprefixed_type;
 
 typedef sb_console_state maybe_console_state;
 typedef sb_console_state auto_console_state;
@@ -655,6 +721,68 @@ substr(buf, ofs, count_sv=NULL, replacement=NULL)
       else {
          ST(0)= sub_ref; /* already mortal */
          XSRETURN(1);
+      }
+
+void
+append_asn1_der_length(buf, val)
+   secret_buffer *buf
+   UV val
+   PPCODE:
+      secret_buffer_append_uv_asn1_der_length(buf, val);
+
+void
+append_base128le(buf, val)
+   secret_buffer *buf
+   UV val
+   PPCODE:
+      secret_buffer_append_uv_base128le(buf, val);
+
+void
+append_base128be(buf, val)
+   secret_buffer *buf
+   UV val
+   PPCODE:
+      secret_buffer_append_uv_base128be(buf, val);
+
+void
+append_lenprefixed(buf, vals, int_type=BASE128BE)
+   secret_buffer *buf
+   SV *vals
+   secret_buffer_lenprefixed_type int_type
+   INIT:
+      size_t bytes_needed= 0;
+      IV val_count, i;
+      SV **val_vec;
+   PPCODE:
+      /* User can pass an array of values, or just one value */
+      if (SvROK(vals) && SvTYPE(SvRV(vals)) == SVt_PVAV) {
+         val_vec= unwrap_array(vals, &val_count);
+      } else {
+         val_vec= &vals;
+         val_count= 1;
+      }
+      /* Add up all the lengths and over-estimate 9 bytes for each length specifier */
+      for (i= 0; i < val_count; i++) {
+         STRLEN len;
+         secret_buffer_SvPVbyte(val_vec[i], &len);
+         bytes_needed += 9 + len;
+      }
+      /* ensure space with one reallocation */
+      secret_buffer_alloc_at_least(buf, buf->len + bytes_needed);
+      /* append each length and span to the buffer */
+      for (i= 0; i < val_count; i++) {
+         STRLEN len;
+         size_t buf_pos;
+         const char *data= secret_buffer_SvPVbyte(val_vec[i], &len);
+         switch (int_type) {
+         case ASN1_DER_LENGTH : secret_buffer_append_uv_asn1_der_length(buf, len); break;
+         case BASE128LE : secret_buffer_append_uv_base128le(buf, len); break;
+         case BASE128BE : secret_buffer_append_uv_base128be(buf, len); break;
+         default: croak("BUG");
+         }
+         buf_pos= buf->len;
+         secret_buffer_set_len(buf, buf_pos + len);
+         memcpy(buf->data + buf_pos, data, len);
       }
 
 IV
@@ -1233,6 +1361,79 @@ scan(self, pattern=NULL, flags= 0)
       }
 
 void
+parse_lenprefixed(self, int_type=BASE128BE, err_out=&PL_sv_undef)
+   SV *self
+   secret_buffer_lenprefixed_type int_type
+   SV *err_out
+   INIT:
+      secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
+      secret_buffer_parse p;
+      UV len;
+      bool success;
+      /* treat an invalid span as a bug, rather than returning it to the user in the err_out param */
+      if (!secret_buffer_parse_init_from_sv(&p, self))
+         croak("%s", p.error);
+   PPCODE:
+      switch (int_type) {
+      case ASN1_DER_LENGTH : success= secret_buffer_parse_uv_asn1_der_length(&p, &len); break;
+      case BASE128LE : success= secret_buffer_parse_uv_base128le(&p, &len); break;
+      case BASE128BE : success= secret_buffer_parse_uv_base128be(&p, &len); break;
+      default: croak("BUG");
+      }
+      if (!success) {
+         /* export the parse error to the scalar-ref provided */
+         if (SvROK(err_out))
+            sv_setpvn(SvRV(err_out), p.error, strlen(p.error));
+         XSRETURN_UNDEF;
+      }
+      /* Do enough bytes remain in the span? */
+      else if (len > p.lim - p.pos) {
+         if (SvROK(err_out))
+            sv_setpvs(SvRV(err_out), "Length exceeds end of Span");
+         XSRETURN_UNDEF;
+      }
+      else {
+         size_t data_pos= p.pos - (U8*) p.sbuf->data;
+         PUSHs(secret_buffer_span_new_obj(p.sbuf, data_pos, data_pos + len, 0));
+         span->pos= data_pos + len;
+      }
+
+SV*
+parse_asn1_der_length(self, err_out=&PL_sv_undef)
+   SV *self
+   SV *err_out
+   ALIAS:
+      parse_base128le = 1
+      parse_base128be = 2
+   INIT:
+      secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
+      secret_buffer_parse p;
+      UV val_out;
+      bool success;
+      /* treat an invalid span as a bug, rather than returning it to the user in the err_out param */
+      if (!secret_buffer_parse_init_from_sv(&p, self))
+         croak("%s", p.error);
+   CODE:
+      switch (ix) {
+      case 0 : success= secret_buffer_parse_uv_asn1_der_length(&p, &val_out); break;
+      case 1 : success= secret_buffer_parse_uv_base128le(&p, &val_out); break;
+      case 2 : success= secret_buffer_parse_uv_base128be(&p, &val_out); break;
+      default: croak("BUG");
+      }
+      if (success) {
+         /* advance the span position */
+         span->pos= p.pos - (U8*) p.sbuf->data;
+         RETVAL= newSVuv(val_out);
+      } else {
+         /* export the error to the scalar-ref provided */
+         if (SvROK(err_out))
+            sv_setpvn(SvRV(err_out), p.error, strlen(p.error));
+         RETVAL= &PL_sv_undef;
+      }
+   OUTPUT:
+      RETVAL
+
+void
 copy(self, ...)
    SV *self
    ALIAS:
@@ -1294,18 +1495,25 @@ cmp(lhs, rhs, reverse=false)
 BOOT:
    int i;
    HV *stash= gv_stashpvs("Crypt::SecretBuffer", 1);
+   HV *exports_stash= gv_stashpvs("Crypt::SecretBuffer::Exports", 1);
 #define EXPORT_CONST(name, const) \
-   newCONSTSUB(stash, name, make_enum_dualvar(aTHX_ const, newSVpvs_share(name)))
+   newCONSTSUB(stash, name, make_enum_dualvar(aTHX_ const, newSVpvs_share(name)));\
+   hv_stores(exports_stash, name, SvREFCNT_inc(*hv_fetchs(stash, name, 0)))
    EXPORT_CONST("NONBLOCK",      SECRET_BUFFER_NONBLOCK);
    EXPORT_CONST("AT_LEAST",      SECRET_BUFFER_AT_LEAST);
    EXPORT_CONST("MATCH_MULTI",   SECRET_BUFFER_MATCH_MULTI);
    EXPORT_CONST("MATCH_REVERSE", SECRET_BUFFER_MATCH_REVERSE);
    EXPORT_CONST("MATCH_NEGATE",  SECRET_BUFFER_MATCH_NEGATE);
+   EXPORT_CONST("MATCH_ANCHORED",SECRET_BUFFER_MATCH_ANCHORED);
+   EXPORT_CONST("BASE128LE",     BASE128LE);
+   EXPORT_CONST("BASE128BE",     BASE128BE);
+   EXPORT_CONST("ASN1_DER_LENGTH", ASN1_DER_LENGTH);
 #undef EXPORT_CONST
    SV *enc[SECRET_BUFFER_ENCODING_MAX+1];
    memset(enc, 0, sizeof(enc));
 #define EXPORT_ENCODING(name, str, const) \
-   newCONSTSUB(stash, name, (enc[const]= make_enum_dualvar(aTHX_ const, newSVpvs_share(str))))
+   newCONSTSUB(stash, name, (enc[const]= make_enum_dualvar(aTHX_ const, newSVpvs_share(str)))); \
+   hv_stores(exports_stash, name, SvREFCNT_inc(*hv_fetchs(stash, name, 0)))
    EXPORT_ENCODING("ASCII",    "ASCII",      SECRET_BUFFER_ENCODING_ASCII);
    EXPORT_ENCODING("ISO8859_1","ISO-8859-1", SECRET_BUFFER_ENCODING_ISO8859_1);
    EXPORT_ENCODING("UTF8",     "UTF-8",      SECRET_BUFFER_ENCODING_UTF8);

@@ -276,33 +276,24 @@ Require the match begin at the start of the specified span of the buffer.
 
 {
    package Crypt::SecretBuffer::Exports;
-
    use Exporter 'import';
    @Crypt::SecretBuffer::Exports::EXPORT_OK= qw(
       secret_buffer secret span unmask_secrets_to memcmp
       NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX BASE64
       MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED
+      BASE128BE BASE128LE ASN1_DER_LENGTH
    );
-   *NONBLOCK=       *Crypt::SecretBuffer::NONBLOCK;
-   *AT_LEAST=       *Crypt::SecretBuffer::AT_LEAST;
-   *ISO8859_1=      *Crypt::SecretBuffer::ISO8859_1;
-   *ASCII=          *Crypt::SecretBuffer::ASCII;
-   *UTF8=           *Crypt::SecretBuffer::UTF8;
-   *UTF16LE=        *Crypt::SecretBuffer::UTF16LE;
-   *UTF16BE=        *Crypt::SecretBuffer::UTF16BE;
-   *HEX=            *Crypt::SecretBuffer::HEX;
-   *BASE64=         *Crypt::SecretBuffer::BASE64;
-   *MATCH_MULTI=    *Crypt::SecretBuffer::MATCH_MULTI;
-   *MATCH_REVERSE=  *Crypt::SecretBuffer::MATCH_REVERSE;
-   *MATCH_NEGATE=   *Crypt::SecretBuffer::MATCH_NEGATE;
-   *MATCH_ANCHORED= *Crypt::SecretBuffer::MATCH_ANCHORED;
 }
 
+# Some of the exported functions are not methods, so instead of having them in the object's
+# namespace I put them in the ::Exports namespace.  Importing from Crypt::SecretBuffer is
+# equivalent to importing from Crypt::SecretBuffer::Exports.
 sub import {
    splice(@_, 0, 1, 'Crypt::SecretBuffer::Exports');
    goto \&Crypt::SecretBuffer::Exports::import;
 }
 
+# For "use Inline -with => 'Crypt::SecretBuffer';" but lazy-load the data.
 sub Inline {
    require Crypt::SecretBuffer::Install::Files;
    goto \&Crypt::SecretBuffer::Install::Files::Inline;
@@ -492,6 +483,36 @@ L<Span object|Crypt::SecretBuffer::Span> and then call its methods.
 
 Compare contents of the buffer byte-by-byte to another SecretBuffer (or Span, or plain scalar)
 in the same manner as the C function C<memcmp>.  (returns C<< <0 >>, C<0>, or C<< >0 >>)
+
+=method append_lenprefixed
+
+  $buf->append_lenprefixed($buf_or_span_or_scalar, $format=BASE128BE);
+  $buf->append_lenprefixed(\@vals, $format=BASE128BE);
+
+Append one or more strings (which can be a SecretBuffer, Span, or plain scalar) to the buffer,
+prefixing each with a variable-length encoding of the number of bytes that follows.  The default
+variable length encoding is Base128 big-endian, the same as implemented in C<< pack('w',...) >>.
+In other words,
+
+  for (@vals) {
+    my $len= ref($_)? $_->length : length($_);
+    $buf->append(pack("w", $len))->append($_);
+  }
+
+The following lower-level functions can be used to append only the variable-length integer
+without a payload:
+
+=over
+
+=item append_base128be
+
+=item append_base128le
+
+=item append_asn1_der_length
+
+=back
+
+See L<Crypt::SecretBuffer::Span/parse_lenprefixed> for the decoding routines.
 
 =method append_random
 
