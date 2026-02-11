@@ -28,6 +28,7 @@
 typedef struct secret_buffer_span {
    size_t pos, lim;
    int encoding;
+   const char *last_error;
 } secret_buffer_span;
 
 // For typemap
@@ -60,50 +61,6 @@ static SV * make_enum_dualvar(pTHX_ IV ival, SV *name) {
    SvIOK_on(name);
    SvREADONLY_on(name);
    return name;
-}
-
-/* Return an SV* vector of an AV or arrayref.
- * Returns NULL if it wasn't an AV or arrayref.
- * The return value is either the underlying vector of the AV,
- * or an allocated vector which will be freed automatically.
- * The vector could be destroyed if you modify the AV!
- * The returned SVs may still have get/set magic.
- */
-static SV** unwrap_array(SV *array, IV *len) {
-  AV *av;
-  SV **vec;
-  IV n;
-  if (array && SvTYPE(array) == SVt_PVAV)
-    av= (AV*) array;
-  else if (array && SvROK(array) && SvTYPE(SvRV(array)) == SVt_PVAV)
-    av= (AV*) SvRV(array);
-  else {
-    *len= 0;
-    return NULL;
-  }
-  n= av_len(av) + 1;
-  vec= AvARRAY(av);
-  /* tied arrays and non-allocated empty arrays return NULL */
-  if (!vec) {
-    if (n == 0)
-      /* don't return a NULL (false) for an empty array,
-       * but doesn't need to be a real pointer
-       * as long as caller respects len==0 */
-      vec= (SV**) 1;
-    else {
-      /* in case of a tied array, extract the elements
-       * into a temporary buffer, freed later by perl */
-      IV i;
-      Newx(vec, n, SV*);
-      SAVEFREEPV(vec);
-      for (i= 0; i < n; i++) {
-        SV **el= av_fetch(av, i, 0);
-        vec[i]= el? *el : NULL;
-      }
-    }
-  }
-  *len= n;
-  return vec;
 }
 
 /**********************************************************************************************\
@@ -745,41 +702,26 @@ append_base128be(buf, val)
       secret_buffer_append_uv_base128be(buf, val);
 
 void
-append_lenprefixed(buf, vals, int_type=BASE128BE)
+append_lenprefixed(buf, ...)
    secret_buffer *buf
-   SV *vals
-   secret_buffer_lenprefixed_type int_type
    INIT:
       size_t bytes_needed= 0;
       IV val_count, i;
-      SV **val_vec;
    PPCODE:
-      /* User can pass an array of values, or just one value */
-      if (SvROK(vals) && SvTYPE(SvRV(vals)) == SVt_PVAV) {
-         val_vec= unwrap_array(vals, &val_count);
-      } else {
-         val_vec= &vals;
-         val_count= 1;
-      }
       /* Add up all the lengths and over-estimate 9 bytes for each length specifier */
-      for (i= 0; i < val_count; i++) {
+      for (i= 1; i < items; i++) {
          STRLEN len;
-         secret_buffer_SvPVbyte(val_vec[i], &len);
+         secret_buffer_SvPVbyte(ST(i), &len);
          bytes_needed += 9 + len;
       }
       /* ensure space with one reallocation */
       secret_buffer_alloc_at_least(buf, buf->len + bytes_needed);
       /* append each length and span to the buffer */
-      for (i= 0; i < val_count; i++) {
+      for (i= 1; i < items; i++) {
          STRLEN len;
          size_t buf_pos;
-         const char *data= secret_buffer_SvPVbyte(val_vec[i], &len);
-         switch (int_type) {
-         case ASN1_DER_LENGTH : secret_buffer_append_uv_asn1_der_length(buf, len); break;
-         case BASE128LE : secret_buffer_append_uv_base128le(buf, len); break;
-         case BASE128BE : secret_buffer_append_uv_base128be(buf, len); break;
-         default: croak("BUG");
-         }
+         const char *data= secret_buffer_SvPVbyte(ST(i), &len);
+         secret_buffer_append_uv_base128be(buf, len);
          buf_pos= buf->len;
          secret_buffer_set_len(buf, buf_pos + len);
          memcpy(buf->data + buf_pos, data, len);
@@ -1251,6 +1193,14 @@ encoding(span, newval_sv= NULL)
          croak("BUG");
       PUSHs(enc_const);
 
+const char *
+last_error(span)
+   secret_buffer_span *span
+   CODE:
+      RETVAL= span->last_error;
+   OUTPUT:
+      RETVAL
+
 void
 set_up_us_the_bom(self)
    SV *self
@@ -1361,47 +1311,39 @@ scan(self, pattern=NULL, flags= 0)
       }
 
 void
-parse_lenprefixed(self, int_type=BASE128BE, err_out=&PL_sv_undef)
+parse_lenprefixed(self, count = 1)
    SV *self
-   secret_buffer_lenprefixed_type int_type
-   SV *err_out
+   IV count
    INIT:
       secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
       secret_buffer_parse p;
       UV len;
+      size_t ofs;
       bool success;
       /* treat an invalid span as a bug, rather than returning it to the user in the err_out param */
       if (!secret_buffer_parse_init_from_sv(&p, self))
          croak("%s", p.error);
    PPCODE:
-      switch (int_type) {
-      case ASN1_DER_LENGTH : success= secret_buffer_parse_uv_asn1_der_length(&p, &len); break;
-      case BASE128LE : success= secret_buffer_parse_uv_base128le(&p, &len); break;
-      case BASE128BE : success= secret_buffer_parse_uv_base128be(&p, &len); break;
-      default: croak("BUG");
+      while (count && p.pos < p.lim) {
+         if (!secret_buffer_parse_uv_base128be(&p, &len)) {
+            span->last_error= p.error;
+            XSRETURN_EMPTY;
+         }
+         if (len > p.lim - p.pos) {
+            span->last_error= "Length exceeds end of Span";
+            XSRETURN_EMPTY;
+         }
+         ofs= p.pos - (U8*) p.sbuf->data;
+         XPUSHs(secret_buffer_span_new_obj(p.sbuf, ofs, ofs + len, 0));
+         p.pos += len;
+         if (count > 0) --count;
       }
-      if (!success) {
-         /* export the parse error to the scalar-ref provided */
-         if (SvROK(err_out))
-            sv_setpvn(SvRV(err_out), p.error, strlen(p.error));
-         XSRETURN_UNDEF;
-      }
-      /* Do enough bytes remain in the span? */
-      else if (len > p.lim - p.pos) {
-         if (SvROK(err_out))
-            sv_setpvs(SvRV(err_out), "Length exceeds end of Span");
-         XSRETURN_UNDEF;
-      }
-      else {
-         size_t data_pos= p.pos - (U8*) p.sbuf->data;
-         PUSHs(secret_buffer_span_new_obj(p.sbuf, data_pos, data_pos + len, 0));
-         span->pos= data_pos + len;
-      }
+      span->pos= p.pos - (U8*) p.sbuf->data;
+      span->last_error= NULL;
 
 SV*
-parse_asn1_der_length(self, err_out=&PL_sv_undef)
+parse_asn1_der_length(self)
    SV *self
-   SV *err_out
    ALIAS:
       parse_base128le = 1
       parse_base128be = 2
@@ -1410,7 +1352,7 @@ parse_asn1_der_length(self, err_out=&PL_sv_undef)
       secret_buffer_parse p;
       UV val_out;
       bool success;
-      /* treat an invalid span as a bug, rather than returning it to the user in the err_out param */
+      /* treat an invalid span as a bug, rather than returning it to the user as last_error */
       if (!secret_buffer_parse_init_from_sv(&p, self))
          croak("%s", p.error);
    CODE:
@@ -1423,11 +1365,10 @@ parse_asn1_der_length(self, err_out=&PL_sv_undef)
       if (success) {
          /* advance the span position */
          span->pos= p.pos - (U8*) p.sbuf->data;
+         span->last_error= NULL;
          RETVAL= newSVuv(val_out);
       } else {
-         /* export the error to the scalar-ref provided */
-         if (SvROK(err_out))
-            sv_setpvn(SvRV(err_out), p.error, strlen(p.error));
+         span->last_error= p.error;
          RETVAL= &PL_sv_undef;
       }
    OUTPUT:

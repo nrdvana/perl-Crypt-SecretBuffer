@@ -486,33 +486,32 @@ in the same manner as the C function C<memcmp>.  (returns C<< <0 >>, C<0>, or C<
 
 =method append_lenprefixed
 
-  $buf->append_lenprefixed($buf_or_span_or_scalar, $format=BASE128BE);
-  $buf->append_lenprefixed(\@vals, $format=BASE128BE);
+  $buf->append_lenprefixed(@byte_strings);
 
-Append one or more strings (which can be a SecretBuffer, Span, or plain scalar) to the buffer,
-prefixing each with a variable-length encoding of the number of bytes that follows.  The default
-variable length encoding is Base128 big-endian, the same as implemented in C<< pack('w',...) >>.
-In other words,
+Append one or more strings (which can be a SecretBuffer, L<Span|Crypt::SecretBuffer::Span>, or
+plain scalar of bytes) to the buffer, prefixing each with a variable-length encoding of the
+number of bytes that follows.
+The variable length encoding is base128 big-endian, the same as implemented in
+C<< pack('w',...) >>.  In other words,
 
-  for (@vals) {
+  for (@byte_strings) {
     my $len= ref($_)? $_->length : length($_);
     $buf->append(pack("w", $len))->append($_);
   }
 
-The following lower-level functions can be used to append only the variable-length integer
-without a payload:
+See L<Crypt::SecretBuffer::Span/parse_lenprefixed> for the decoding routine.
 
-=over
+=method append_base128be
 
-=item append_base128be
+Append a variable-length integer encoded as base128 big-endian.  (same as C<< pack('w') >>)
 
-=item append_base128le
+=method append_base128le
 
-=item append_asn1_der_length
+Append a variable-length integer encoded as base128 little-endian.
 
-=back
+=method append_asn1_der_length
 
-See L<Crypt::SecretBuffer::Span/parse_lenprefixed> for the decoding routines.
+Append a variable-length integer encoded as the format used by ASN.1 DER for element lengths.
 
 =method append_random
 

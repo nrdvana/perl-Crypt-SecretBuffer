@@ -117,6 +117,11 @@ Read-only; this determines how characters will be iterated within the SecretBuff
 This carries over to Span objects created from this span.
 See L<Crypt::SecretBuffer/Character Encodings>.
 
+=attribute last_error
+
+Some parse functions return C<undef> on failure and set this attribute to something more
+informative.  Only check this attribute after one of those parse functions has failed.
+
 =method parse
 
   $span= $span->parse($pattern);
@@ -164,40 +169,42 @@ Only remove from the end of the Span
 
 =method parse_lenprefixed
 
-  $span= $span->parse_lenprefixed($type=BASE128BE, \$err_out);
+  $span= $span->parse_lenprefixed # count=1
+    or croak $span->last_error;
+  @spans= $span->parse_lenprefixed($count)
+    or croak $span->last_error;
+  @spans= $span->parse_lenprefixed(-1);
 
-Parse a length-prefixed span from the start of this span, updating C<pos> if the variable-length
-is valid and at least that many bytes follow it.  On failure, return C<undef> and set C<$err_out>
-if provided.
+Parse one or more length-prefixed spans from the start of this span, returning a list of Span
+objects and updating C<pos> if fully successful.  This first parses a variable-length
+Base128-BigEndian integer, then ensures that there are that many bytes remaining in the span,
+then creates a Span object describing those bytes and advances C<pos> and possibly repeats.
+If the variable-length intgeer is malformed, or not enough bytes remain for the span, the method
+returns an empty list and sets the L</last_error> attribute.
+If you request a count greater than one, all the attempts must succeed or the method returns an
+empty list and sets C<last_error>.  Requesting a count of C<-1> means to consume the remainder
+of the span, which must terminate cleanly at the end of a length-prefixed string.
 
-The following lower-level methods can be used to parse just the variable-length integer formats:
-
-=over
-
-=item parse_base128be
+=method parse_base128be
 
   $len= $span->parse_base128be;
-  $len= $span->parse_base128be(\$err_out);
 
 Parse a big-endian base128 encoding where the high-bit indicates continuation, same as
-C<< unpack 'w' >>.
+C<< unpack 'w' >>.  On failure, returns C<undef> and sets L</last_error>.
 
-=item parse_base128le
+=method parse_base128le
 
   $len= $span->parse_base128le;
-  $len= $span->parse_base128le(\$err_out);
 
 Parse a little-endian base128 encoding where the high-bit indicates continuation, such as used
-by Google Protocol Buffers.
+by Google Protocol Buffers.  On failure, returns C<undef> and sets L</last_error>.
 
-=item parse_asn1_der_length
+=method parse_asn1_der_length
 
   $len= $span->parse_asn1_der_length;
-  $len= $span->parse_asn1_der_length(\$err_out);
 
 Parse the variable-length integer used by ASN.1 DER encoding for the length of an element.
-
-=back
+On failure, returns C<undef> and sets L</last_error>.
 
 =method consume_bom
 

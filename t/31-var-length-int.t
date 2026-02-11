@@ -53,14 +53,34 @@ test_encode_decode 'append_base128be', 'parse_base128be';
 subtest lenprefixed => sub {
    my $s= secret;
    my @input= ( secret("Some Data"), secret("Other Data")->span(0,5), "Nonsecret" );
-   $s->append_lenprefixed(\@input);
-   my @output;
-   my $span= $s->span;
+   $s->append_lenprefixed(@input);
    note $s->unmask_to(\&escape_nonprintable);
-   is( $span->parse_lenprefixed->memcmp("Some Data"), 0, 'from buffer' );
-   is( $span->parse_lenprefixed->memcmp("Other"), 0, 'from span' );
-   is( $span->parse_lenprefixed->memcmp("Nonsecret"), 0, 'from scalar' );
+   my $span= $s->span;
+   my @output= $span->parse_lenprefixed(-1);
+   is( \@output, [
+      object { call [ memcmp => "Some Data" ], 0; },
+      object { call [ memcmp => "Other" ], 0; },
+      object { call [ memcmp => "Nonsecret" ], 0; }
+   ]);
    is( $span->len, 0, 'consumed all data' );
+   is( $span->last_error, undef, 'no error' );
+
+   # Now test a parse error
+   $span= $s->span(0, -5);
+   is( [ $span->parse_lenprefixed(-1) ], [], 'parse failed' );
+   is( $span->pos, 0, 'pos unchanged' );
+   like( $span->last_error, qr/end of Span/ );
+
+   is( [ $span->parse_lenprefixed(3) ], [], 'parse failed' );
+   is( $span->pos, 0, 'pos unchanged' );
+   like( $span->last_error, qr/end of Span/ );
+
+   is( [ $span->parse_lenprefixed ], [ object { call [memcmp => "Some Data"], 0; } ], 'parse one' );
+   is( $span->pos, 10, 'pos updated' );
+   is( $span->last_error, undef, 'no error' );
+   is( [ $span->parse_lenprefixed ], [ object { call [memcmp => "Other"], 0; } ], 'parse one' );
+   is( $span->pos, 16, 'pos updated' );
+   is( $span->last_error, undef, 'no error' );
 };
 
 done_testing;
