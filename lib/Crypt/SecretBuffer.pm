@@ -281,7 +281,6 @@ Require the match begin at the start of the specified span of the buffer.
       secret_buffer secret span unmask_secrets_to memcmp
       NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX BASE64
       MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED
-      BASE128BE BASE128LE ASN1_DER_LENGTH
    );
 }
 

@@ -1,7 +1,8 @@
+Version 0.018 - 2026-02-11
   - New exportable span() function which universally constructs a span
     from a SecretBuffer, Span object, or plain scalar.
   - PEM object header values are no longer secrets, by default.
-    This is a breaking change, but the module has been out less than a month.
+    This is a breaking change, but the module has been out less than two months.
   - New methods to encode and decode variable-length integers and
     length-prefixed strings:
      - append_lenprefixed     / parse_lenprefixed
