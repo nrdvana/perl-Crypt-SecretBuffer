@@ -18,23 +18,24 @@ use Crypt::SecretBuffer qw/ secret span MATCH_NEGATE MATCH_MULTI ISO8859_1 BASE6
 
 This module parses the PEM format used by OpenSSL and OpenSSH.  PEM is a simple text format made
 of a block of Base64 data with optional headers and begin/end markers.  This module parses the
-begin/end markers, copies that span of bytes into a new SecretBuffer, makes the attributes into
-a hash, and marks the Base64 span in case you want to process the bytes.
+begin/end markers, copies that span of bytes into a new SecretBuffer, makes the headers into
+a hashref, and stores the Span of Base64 as the attribute L</content>.
 
 To be clear, this only parses the I<text portions> of PEM, I<not the ASN.1 structure> within the
 base64 data.
 
-The label around the PEM block and the keys of its headers (if any) are considered non-secret,
-and copied out of the SecretBuffer into perl scalars.  The values of the headers, and the Base64
-payload remain inside secret Span objects.
+The label around the PEM block and its headers (if any) are considered non-secret, and copied
+out of the SecretBuffer into perl scalars.  The Base64 payload remains inside the SecretBuffer,
+in case this was an unencrypted private key.  There is also an option to treat the header values
+as secrets.
 
 =constructor parse
 
   my $pem= Crypt::SecretBuffer::PEM->parse($span, %options);
 
 Parse the next PEM block found in the L<Span|Crypt::SecretBuffer::Span>.  The span is updated to
-begin on the line following the PEM block.  If no PEM block is found, the span object remains
-unchanged.
+begin on the line following the PEM block.  If no PEM block is found, this returns C<undef> and
+the span object remains unchanged.
 
 Invalid PEM blocks (such as mismatched BEGIN/END markers) are ignored, as well as any text
 outside of the markers.
@@ -45,8 +46,8 @@ Options:
 
 =item secret_headers
 
-Whether the values of the PEM headers should be stored in L<Crypt::SecretBuffer::Span> objects.
-Default is false.
+Boolean, whether the values of the PEM headers should be stored in L<Crypt::SecretBuffer::Span>
+objects.  Default is false.
 
 =back
 
@@ -167,17 +168,20 @@ A L<Crypt::SecretBuffer> holding the complete PEM text from BEGIN marker to END 
 =attribute headers
 
 PEM format has optional C<< 'NAME: VALUE' >> pairs that can appear right after the BEGIN marker.
-This presents them as a hashref.  Note that the values are L<Span|Crypt::SecretBuffer::Span>
-objects.
+This presents them as a hashref.  Note that the values can be L<Span|Crypt::SecretBuffer::Span>
+objects if you used the C<secret_headers> option.
 
 =attribute header_kv
 
-To preserve order of headers, this attribute stores a list of C<< [ $key, $value, ... ] >>.
-Note that the values are L<Span|Crypt::SecretBuffer::Span> objects.
+To preserve order of headers, this attribute stores a list of
+C<< [ $key0, $value0, $key1, $value1, ... ] >>.
 
 =attribute content
 
 A L<Span|Crypt::SecretBuffer::Span> or SecretBuffer that contains the bytes of the PEM payload.
+This span created by L</parse> has C<< encoding => BASE64 >> set, which affects the
+character-based methods like C<parse>, but has not actually been Base64-decoded, which matters
+for methods like C<length> or C<memcmp>.
 
 =cut
 
