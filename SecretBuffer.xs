@@ -741,11 +741,17 @@ memcmp(lhs, rhs, reverse=false)
       const char *rhs_buf= secret_buffer_SvPVbyte(rhs, &rhs_len);
       PERL_UNUSED_VAR(ix);
    CODE:
-      RETVAL= memcmp(lhs_buf, rhs_buf, (lhs_len < rhs_len? lhs_len : rhs_len));
-      if (RETVAL < 0) RETVAL= -1;
-      else if (RETVAL > 0) RETVAL= 1;
-      else if (RETVAL == 0 && lhs_len != rhs_len)
-         RETVAL= lhs_len < rhs_len? -1 : 1;
+      /* constant-time loop */
+      {
+         volatile int ret= 0;
+         int i, common_len= lhs_len < rhs_len? lhs_len : rhs_len;
+         for (i = 0; i < common_len; i++)
+            if (lhs_buf[i] != rhs_buf[i] && !ret)
+               ret= lhs_buf[i] < rhs_buf[i]? -1 : 1;
+         if (ret == 0 && lhs_len != rhs_len)
+            ret= lhs_len < rhs_len? -1 : 1;
+         RETVAL= ret;
+      }
       if (reverse)
          RETVAL= -RETVAL;
    OUTPUT:
@@ -1427,7 +1433,6 @@ cmp(lhs, rhs, reverse=false)
          croak("%s", rhs_parse.error);
    CODE:
       RETVAL= sb_parse_codepointcmp(&lhs_parse, &rhs_parse);
-      RETVAL= RETVAL < 0? -1 : RETVAL > 0? 1 : 0;
       if (reverse)
          RETVAL= -RETVAL;
    OUTPUT:

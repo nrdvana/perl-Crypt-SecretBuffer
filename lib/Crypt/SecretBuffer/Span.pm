@@ -295,14 +295,16 @@ bytes of UTF-8 rather than perl wide characters.
   $cmp= $span->memcmp($other_thing);
 
 Compare contents of the span byte-by-byte to another Span (or SecretBuffer, or plain scalar) in
-the same manner as the C function C<memcmp>.  (returns C<< <0 >>, C<0>, or C<< >0 >>)
+the same manner as the C function C<memcmp> but in constant time. (iterating the full length of
+the shortest string to prevent timing attacks)
 
 =method cmp
 
   $cmp= $span->cmp($other_thing);
 
 Iterate codepoints of this Span and compare each numerically to the codepoints of another Span
-(or SecretBuffer, or plain scalar).  This method is also used as the overloaded 'cmp' operator.
+(or SecretBuffer, or plain scalar).  This iterates the full length of the shortest string to
+prevent timing attacks.  This method is also used as the overloaded 'cmp' operator.
 This is B<not> a locale-aware comparison.
 
 =cut

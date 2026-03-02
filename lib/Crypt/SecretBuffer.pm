@@ -481,7 +481,8 @@ L<Span object|Crypt::SecretBuffer::Span> and then call its methods.
   $cmp= $buf->memcmp($buf2);
 
 Compare contents of the buffer byte-by-byte to another SecretBuffer (or Span, or plain scalar)
-in the same manner as the C function C<memcmp>.  (returns C<< <0 >>, C<0>, or C<< >0 >>)
+in the same manner as the C function C<memcmp> but in constant time. (iterating the full length
+of the shortest string to prevent timing attacks)
 
 =method append_lenprefixed
 

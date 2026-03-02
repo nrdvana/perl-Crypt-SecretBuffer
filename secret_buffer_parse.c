@@ -759,6 +759,8 @@ static bool sb_parse_match_charset_codepoints(
 
 int sb_parse_codepointcmp(secret_buffer_parse *lhs, secret_buffer_parse *rhs) {
    I32 lhs_cp, rhs_cp;
+   volatile int ret= 0;
+   /* constant-time iteration per the shorter of the two strings */
    while (lhs->pos < lhs->lim && rhs->pos < rhs->lim) {
       lhs_cp= sb_parse_next_codepoint(lhs);
       if (lhs_cp < 0)
@@ -766,10 +768,11 @@ int sb_parse_codepointcmp(secret_buffer_parse *lhs, secret_buffer_parse *rhs) {
       rhs_cp= sb_parse_next_codepoint(rhs);
       if (rhs_cp < 0)
          croak("Encoding error in right-hand buffer");
-      if (lhs_cp != rhs_cp)
-         return lhs_cp < rhs_cp? -1 : 1;
+      if (lhs_cp != rhs_cp && !ret)
+         ret= lhs_cp < rhs_cp? -1 : 1;
    }
-   return (lhs->pos < lhs->lim)?  1 /* right string shorter than left */
+   return ret? ret
+        : (lhs->pos < lhs->lim)?  1 /* right string shorter than left */
         : (rhs->pos < rhs->lim)? -1 /* left string shorter than right */
         : 0;
 }
