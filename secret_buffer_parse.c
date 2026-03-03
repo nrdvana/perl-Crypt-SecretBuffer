@@ -101,72 +101,79 @@ bool secret_buffer_parse_init_from_sv(secret_buffer_parse *parse, SV *sv) {
 bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
    dTHX;
    REGEXP *rx= (REGEXP*)SvRX(pattern);
-   secret_buffer *src_buf;
-   secret_buffer_span *span;
+   secret_buffer_parse pat_parse;
+
    /* Is the pattern a regexp-ref? */
    if (rx) {
       secret_buffer_charset *cset= secret_buffer_charset_from_regexpref(pattern);
       return secret_buffer_match_charset(parse, cset, flags);
    }
-   /* Is the pattern a SecretBuffer? */
-   else if (SvROK(pattern) && (src_buf= secret_buffer_from_magic(pattern, 0))) {
-      return sb_parse_match_str_U8(parse, (U8*) src_buf->data, src_buf->len, flags);
+
+   /* load up a parse struct with the pos, lim, and encoding */
+   if (!secret_buffer_parse_init_from_sv(&pat_parse, pattern))
+      croak("%s", pat_parse.error);
+
+   /* Remove edge case of zero-length pattern (always matches) */
+   if (pat_parse.pos >= pat_parse.lim) {
+      if ((flags & SECRET_BUFFER_MATCH_REVERSE))
+         parse->pos= parse->lim;
+      else
+         parse->lim= parse->pos;
+      return !(flags & SECRET_BUFFER_MATCH_NEGATE);
    }
-   /* Is the pattern a SecretBuffer::Span? */
-   else if (SvROK(pattern) && (span= secret_buffer_span_from_magic(pattern, 0))) {
-      secret_buffer_parse pattern_parse;
-      SV **buf_field= hv_fetchs(((HV*)SvRV(pattern)), "buf", 0);
-      IV len= span->lim - span->pos;
-      if (!buf_field || !*buf_field || !(src_buf= secret_buffer_from_magic(*buf_field, 0)))
-         croak("Span lacks reference to source buffer");
-      if (!secret_buffer_parse_init(&pattern_parse, src_buf, span->pos, span->lim, span->encoding))
-         croak("%s", pattern_parse.error);
-      /* optimize if it is a span of plain bytes */
-      if (span->encoding == SECRET_BUFFER_ENCODING_ISO8859_1) {
-         return sb_parse_match_str_U8(parse, pattern_parse.pos, len, flags);
-      }
-      /* else need to unpack the codepoints of the span */
-      else {
-         /* create a temporary secret buffer of integers */
-         secret_buffer *tmp= secret_buffer_new(len * sizeof(I32), NULL);
-         IV i= 0;
-         while (pattern_parse.pos < pattern_parse.lim) {
-            int cp= sb_parse_next_codepoint(&pattern_parse);
-            if (cp < 0)
-               croak("encoding error in pattern: %s", pattern_parse.error);
-            ASSUME(i < len);
-            ((I32*)tmp->data)[i++]= cp;
-         }
-         secret_buffer_set_len(tmp, i * sizeof(I32));
-         return sb_parse_match_str_I32(parse, (I32*) tmp->data, i, flags);
+   /* Remove edge case of zero-length subject (never matches) */
+   if (parse->pos >= parse->lim) {
+      return (flags & SECRET_BUFFER_MATCH_NEGATE);
+   }
+
+   /* Since unicode iteration of the pattern is a hassle and might happen lots of times,
+    * convert it to either plain bytes or array of U32 codepoints.
+    */
+   if (pat_parse.encoding != SECRET_BUFFER_ENCODING_ISO8859_1) {
+      int dst_enc= 
+         /* these can be transcoded to bytes */
+         (pat_parse.encoding == SECRET_BUFFER_ENCODING_ASCII
+          || pat_parse.encoding == SECRET_BUFFER_ENCODING_HEX
+          || pat_parse.encoding == SECRET_BUFFER_ENCODING_BASE64)
+         ? SECRET_BUFFER_ENCODING_ISO8859_1
+         : SECRET_BUFFER_ENCODING_I32;
+      SSize_t dst_len= secret_buffer_sizeof_transcode(&pat_parse, dst_enc);
+      if (dst_len < 0)
+         croak("transcode of pattern failed: %s", pat_parse.error);
+      /* No need to transcode SECRET_BUFFER_ENCODING_ASCII, but the above size check
+       * verified it is clean 7-bit, which is the whole point of that encoding.
+       */
+      if (pat_parse.encoding == SECRET_BUFFER_ENCODING_ASCII
+         /* Likewise, if SECRET_BUFFER_ENCODING_UTF8's I32 len is exactly 4x the number of
+          * original bytes, that means every byte became a character, which means every
+          * character could fit in a byte. */
+         || pat_parse.encoding == SECRET_BUFFER_ENCODING_UTF8
+            && dst_len == (pat_parse.lim - pat_parse.pos) * 4
+      ) {
+         pat_parse.encoding= SECRET_BUFFER_ENCODING_ISO8859_1;
+      } else {
+         /* create a temporary secret buffer to hold the transcode */
+         secret_buffer *tmp= secret_buffer_new(0, NULL);
+         secret_buffer_parse pat_orig= pat_parse;
+         secret_buffer_set_len(tmp, dst_len);
+         if (!secret_buffer_parse_init(&pat_parse, tmp, 0, dst_len, dst_enc))
+            croak("transcode of pattern failed: %s", pat_parse.error);
+         /* Transcode the pattern */
+         if (!secret_buffer_transcode(&pat_orig, &pat_parse))
+            croak("transcode of pattern failed: %s", pat_orig.error? pat_orig.error : pat_parse.error);
       }
    }
-   /* Else treat it as a normal SV, either UTF-8 or bytes (ISO8859-1) */
-   else {
-      STRLEN len;
-      U8 *str= (U8*) SvPV(pattern, len);
-      if (SvUTF8(pattern)) {
-         /* unpack the UTF8 codepoints into I32 array.  Just in case they are a
-          * secret, use a SecretBuffer instead of a plain malloc.
-          */
-         secret_buffer_parse tmp;
-         secret_buffer *sb= secret_buffer_new(len * sizeof(I32), NULL); /* mortal, cleans itself up */
-         size_t i= 0;
-         Zero(&tmp, 1, secret_buffer_parse);
-         tmp.pos= str;
-         tmp.lim= str + len;
-         tmp.encoding= SECRET_BUFFER_ENCODING_UTF8;
-         while (tmp.pos < tmp.lim) {
-            int cp= sb_parse_next_codepoint(&tmp);
-            if (cp < 0)
-               croak("%s", tmp.error);
-            ASSUME(i < len);
-            ((I32*)sb->data)[i++]= cp;
-         }
-         secret_buffer_set_len(sb, i * sizeof(I32));
-         return sb_parse_match_str_I32(parse, (I32*) sb->data, i, flags);
-      }
-      return sb_parse_match_str_U8(parse, str, len, flags);
+   /* In some cases it would also be nice to transcode the subject first, but the
+    * final state of the parse struct carries information back to the caller and
+    * needs to refer to original positions of characters. */
+
+   /* Now dipatch to sb_parse_match_str_X */
+   if (pat_parse.encoding == SECRET_BUFFER_ENCODING_ISO8859_1) {
+      size_t pat_len= pat_parse.lim - pat_parse.pos;
+      return sb_parse_match_str_U8(parse, pat_parse.pos, pat_len, flags);
+   } else { /* must be _I32 encoding, from above */
+      size_t pat_len= (pat_parse.lim - pat_parse.pos) >> 2;
+      return sb_parse_match_str_I32(parse, (I32*) pat_parse.pos, pat_len, flags);
    }
 }
 
@@ -909,6 +916,12 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
          }
       }
    }
+   else if (encoding == SECRET_BUFFER_ENCODING_I32) {
+      if (lim - pos < 4)
+         SB_RETURN_ERROR("end of span");
+      cp= *(I32*)pos;
+      pos+= 4;
+   }
    else SB_RETURN_ERROR("unsupported encoding")
    parse->pos= pos;
    return cp;
@@ -1027,6 +1040,12 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse) {
          //warn(" cp=%d, lim-pos=%d, lim_bit=%d", cp, (int)(lim-pos), parse->lim_bit);
       } while (again);
    }
+   else if (encoding == SECRET_BUFFER_ENCODING_I32) {
+      if (lim - pos < 4)
+         SB_RETURN_ERROR("end of span");
+      lim -= 4;
+      cp= *(I32*)lim;
+   }
    else SB_RETURN_ERROR("unsupported encoding")
    parse->lim= lim;
    return cp;
@@ -1049,6 +1068,8 @@ static int sizeof_codepoint_encoding(int codepoint, int encoding) {
    /* Base64 would need to track an accumulator, so just return 1 and fix it in the caller */
    else if (encoding == SECRET_BUFFER_ENCODING_BASE64)
       return codepoint < 0x100? 1 : -1;
+   else if (encoding == SECRET_BUFFER_ENCODING_I32)
+      return 4;
    else
       return -1;
 }
@@ -1110,6 +1131,10 @@ static bool sb_parse_encode_codepoint(secret_buffer_parse *dst, int codepoint) {
    else if (encoding == SECRET_BUFFER_ENCODING_HEX) {
       *dst->pos++ = "0123456789ABCDEF"[(codepoint >> 4) & 0xF];
       *dst->pos++ = "0123456789ABCDEF"[codepoint & 0xF];
+   }
+   else if (encoding == SECRET_BUFFER_ENCODING_I32) {
+      *(I32*)dst->pos = codepoint;
+      dst->pos += 4;
    }
    /* BASE64 is not handled here because the '=' padding can only be generated in
     * a context that knows when we are ending on a non-multiple-of-4. */

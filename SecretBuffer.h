@@ -47,7 +47,8 @@ extern bool secret_buffer_charset_test_codepoint(const secret_buffer_charset *cs
 #define SECRET_BUFFER_ENCODING_UTF16BE      4
 #define SECRET_BUFFER_ENCODING_HEX          5
 #define SECRET_BUFFER_ENCODING_BASE64       6
-#define SECRET_BUFFER_ENCODING_MAX          6
+#define SECRET_BUFFER_ENCODING_I32          7
+#define SECRET_BUFFER_ENCODING_MAX          7
 
 #define SECRET_BUFFER_ENCODING_IS_UNICODE(x)  \
    (  (x) == SECRET_BUFFER_ENCODING_UTF8      \
