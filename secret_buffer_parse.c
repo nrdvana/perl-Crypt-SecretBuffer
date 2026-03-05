@@ -1105,35 +1105,37 @@ static int sizeof_codepoint_encoding(int codepoint, int encoding) {
 
 static bool sb_parse_encode_codepoint(secret_buffer_parse *dst, int codepoint) {
    #define SB_RETURN_ERROR(msg) { dst->error= msg; return false; }
-   int encoding= dst->encoding;
+   int encoding= dst->encoding, n;
+   U8 *dst_pos= dst->pos;
    // codepoints above 0x10FFFF are illegal
    if (codepoint >= 0x110000)
       SB_RETURN_ERROR("invalid codepoint");
    // not quite as efficient as checking during the code below, but saves a bunch of redundancy
-   int n= sizeof_codepoint_encoding(codepoint, encoding);
+   n= sizeof_codepoint_encoding(codepoint, encoding);
    if (n < 0)
       SB_RETURN_ERROR("character too wide for encoding")
-   if (dst->lim - dst->pos < n)
+   if (dst->lim - dst_pos < n)
       SB_RETURN_ERROR("buffer too small")
+   dst->pos += n;
 
    if (encoding == SECRET_BUFFER_ENCODING_ASCII
     || encoding == SECRET_BUFFER_ENCODING_ISO8859_1
     || encoding == SECRET_BUFFER_ENCODING_UTF8
    ) {
       switch ((n-1)&0x3) { // help the compiler understand there are only 4 possible values
-      case 0: *dst->pos++ = (U8) codepoint;
+      case 0: *dst_pos++ = (U8) codepoint;
               break;
-      case 1: *dst->pos++ = (U8)(0xC0 | (codepoint >> 6));
-              *dst->pos++ = (U8)(0x80 | (codepoint & 0x3F));
+      case 1: *dst_pos++ = (U8)(0xC0 | (codepoint >> 6));
+              *dst_pos++ = (U8)(0x80 | (codepoint & 0x3F));
               break;
-      case 2: *dst->pos++ = (U8)(0xE0 | (codepoint >> 12));
-              *dst->pos++ = (U8)(0x80 | ((codepoint >> 6) & 0x3F));
-              *dst->pos++ = (U8)(0x80 | (codepoint & 0x3F));
+      case 2: *dst_pos++ = (U8)(0xE0 | (codepoint >> 12));
+              *dst_pos++ = (U8)(0x80 | ((codepoint >> 6) & 0x3F));
+              *dst_pos++ = (U8)(0x80 | (codepoint & 0x3F));
               break;
-      case 3: *dst->pos++ = (U8)(0xF0 | (codepoint >> 18));
-              *dst->pos++ = (U8)(0x80 | ((codepoint >> 12) & 0x3F));
-              *dst->pos++ = (U8)(0x80 | ((codepoint >> 6) & 0x3F));
-              *dst->pos++ = (U8)(0x80 | (codepoint & 0x3F));
+      case 3: *dst_pos++ = (U8)(0xF0 | (codepoint >> 18));
+              *dst_pos++ = (U8)(0x80 | ((codepoint >> 12) & 0x3F));
+              *dst_pos++ = (U8)(0x80 | ((codepoint >> 6) & 0x3F));
+              *dst_pos++ = (U8)(0x80 | (codepoint & 0x3F));
               break;
       }
    }
@@ -1142,28 +1144,25 @@ static bool sb_parse_encode_codepoint(secret_buffer_parse *dst, int codepoint) {
    ) {
       int low= (encoding == SECRET_BUFFER_ENCODING_UTF16LE)? 0 : 1;
       if (n == 2) {
-         dst->pos[low] = (U8)(codepoint & 0xFF);
-         dst->pos[low^1] = (U8)(codepoint >> 8);
-         dst->pos+= 2;
+         dst_pos[low] = (U8)(codepoint & 0xFF);
+         dst_pos[low^1] = (U8)(codepoint >> 8);
       }
       else {
          int adjusted = codepoint - 0x10000;
          int w0 = 0xD800 | (adjusted >> 10);
          int w1 = 0xDC00 | (adjusted & 0x3FF);
-         dst->pos[low] = (U8)(w0 & 0xFF);
-         dst->pos[1^low] = (U8)(w0 >> 8);
-         dst->pos[2^low] = (U8)(w1 & 0xFF);
-         dst->pos[3^low] = (U8)(w1 >> 8);
-         dst->pos+= 4;
+         dst_pos[low]   = (U8)(w0 & 0xFF);
+         dst_pos[1^low] = (U8)(w0 >> 8);
+         dst_pos[2^low] = (U8)(w1 & 0xFF);
+         dst_pos[3^low] = (U8)(w1 >> 8);
       }
    }
    else if (encoding == SECRET_BUFFER_ENCODING_HEX) {
-      *dst->pos++ = "0123456789ABCDEF"[(codepoint >> 4) & 0xF];
-      *dst->pos++ = "0123456789ABCDEF"[codepoint & 0xF];
+      dst_pos[0] = "0123456789ABCDEF"[(codepoint >> 4) & 0xF];
+      dst_pos[1] = "0123456789ABCDEF"[codepoint & 0xF];
    }
    else if (encoding == SECRET_BUFFER_ENCODING_I32) {
-      *(I32*)dst->pos = codepoint;
-      dst->pos += 4;
+      *(I32*)dst_pos = codepoint;
    }
    /* BASE64 is not handled here because the '=' padding can only be generated in
     * a context that knows when we are ending on a non-multiple-of-4. */
