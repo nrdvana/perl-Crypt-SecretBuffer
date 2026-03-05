@@ -618,11 +618,12 @@ scan(buf, pattern, flags= 0, ofs= 0, len_sv= &PL_sv_undef)
       ))
          croak("%s", parse.error);
    PPCODE:
-      if (!secret_buffer_match(&parse, pattern, flags))
-         if (parse.error)
-            croak("%s", parse.error);
-      PUSHs(sv_2mortal(newSViv(parse.pos - (U8*) buf->data)));
-      PUSHs(sv_2mortal(newSViv(parse.lim - parse.pos)));
+      if (secret_buffer_match(&parse, pattern, flags)) {
+         PUSHs(sv_2mortal(newSViv(parse.pos - (U8*) buf->data)));
+         PUSHs(sv_2mortal(newSViv(parse.lim - parse.pos)));
+      }
+      else if (parse.error)
+         croak("%s", parse.error);
 
 void
 splice(buf, ofs, len, replacement)
@@ -1451,6 +1452,7 @@ BOOT:
    EXPORT_CONST("MATCH_REVERSE", SECRET_BUFFER_MATCH_REVERSE);
    EXPORT_CONST("MATCH_NEGATE",  SECRET_BUFFER_MATCH_NEGATE);
    EXPORT_CONST("MATCH_ANCHORED",SECRET_BUFFER_MATCH_ANCHORED);
+   EXPORT_CONST("MATCH_CONST_TIME",SECRET_BUFFER_MATCH_CONST_TIME);
 #undef EXPORT_CONST
    SV *enc[SECRET_BUFFER_ENCODING_MAX+1];
    memset(enc, 0, sizeof(enc));

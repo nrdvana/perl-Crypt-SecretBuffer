@@ -675,6 +675,7 @@ static bool sb_parse_match_charset_bytes(
    bool reverse=  0 != (flags & SECRET_BUFFER_MATCH_REVERSE);
    bool multi=    0 != (flags & SECRET_BUFFER_MATCH_MULTI) || cset->match_multi;
    bool anchored= 0 != (flags & SECRET_BUFFER_MATCH_ANCHORED);
+   bool consttime=0 != (flags & SECRET_BUFFER_MATCH_CONST_TIME);
    int step= reverse? -1 : 1;
    U8 *pos= reverse? parse->lim-1 : parse->pos,
       *lim= reverse? parse->pos-1 : parse->lim,
@@ -686,16 +687,26 @@ static bool sb_parse_match_charset_bytes(
          // Found.  Now are we looking for a span?
          if (span_start)
             break;
-         if (!multi) {
-            parse->pos= pos;
-            parse->lim= pos+1;
-            return true;
-         }
          span_start= pos;
+         if (!multi) {
+            pos += step;
+            break;
+         }
          negate= !negate;
       } else if (anchored && !span_start)
          break;
       pos += step;
+   }
+   /* If constant time operation is requested, we need to perform one sbc_bitmap_test
+    * for every character in the span, and make sure the compiler doesn't eliminate it.
+    */
+   if (consttime) {
+      volatile bool sink= false;
+      while (pos != lim) {
+         sink ^= sbc_bitmap_test(cset->bitmap, *pos);
+         pos += step;
+      }
+      (void) sink;
    }
    // reached end of defined range, and implicitly ends span
    if (reverse) {
@@ -718,37 +729,55 @@ static bool sb_parse_match_charset_codepoints(
    bool reverse=  0 != (flags & SECRET_BUFFER_MATCH_REVERSE);
    bool multi=    0 != (flags & SECRET_BUFFER_MATCH_MULTI) || cset->match_multi;
    bool anchored= 0 != (flags & SECRET_BUFFER_MATCH_ANCHORED);
+   bool consttime=0 != (flags & SECRET_BUFFER_MATCH_CONST_TIME);
    bool span_started= false;
+   bool encoding_error= false;
    U8 *span_mark= NULL, *prev_mark= reverse? parse->lim : parse->pos;
 
    while (parse->pos < parse->lim) {
       int codepoint= reverse? sb_parse_prev_codepoint(parse)
                             : sb_parse_next_codepoint(parse);
       // warn("parse.pos=%p  parse.lim=%p  parse.enc=%d  cp=%d  parse.err=%s", parse->pos, parse->lim, parse->encoding, codepoint, parse->error);
-      if (codepoint < 0) // encoding error
-         return false;
+      if (codepoint < 0) {// encoding error
+         encoding_error= true;
+         break;
+      }
       if (sbc_test_codepoint(aTHX_ cset, codepoint) != negate) {
          // Found.  Mark boundaries of char.
          // Now are we looking for a span?
          if (span_started)
             break;
-         if (!multi) {
-            if (reverse) {
-               parse->pos= parse->lim;
-               parse->lim= prev_mark;
-            } else {
-               parse->lim= parse->pos;
-               parse->pos= prev_mark;
-            }
-            return true;
-         }
          span_started= true;
          span_mark= prev_mark;
          negate= !negate;
+         if (!multi) {
+            prev_mark= reverse? parse->lim : parse->pos;
+            break;
+         }
       } else if (anchored && !span_started)
          break;
       prev_mark= reverse? parse->lim : parse->pos;
    }
+   /* If constant time operation is requested, we need to perform one sbc_bitmap_test
+    * for every character in the span, and make sure the compiler doesn't eliminate it.
+    */
+   if (consttime) {
+      volatile bool sink= false;
+      while (parse->pos < parse->lim) {
+         int codepoint= reverse? sb_parse_prev_codepoint(parse)
+                               : sb_parse_next_codepoint(parse);
+         // warn("parse.pos=%p  parse.lim=%p  parse.enc=%d  cp=%d  parse.err=%s", parse->pos, parse->lim, parse->encoding, codepoint, parse->error);
+         if (codepoint < 0) { // encoding error
+            encoding_error= true;
+            sink ^= sbc_test_codepoint(aTHX_ cset, 0);
+         }
+         else
+            sink ^= sbc_test_codepoint(aTHX_ cset, codepoint);
+      }
+      (void) sink;
+   }
+   if (encoding_error)
+      return false;
    // reached end of defined range
    if (span_started) { // and implicitly ends span
       if (reverse) {

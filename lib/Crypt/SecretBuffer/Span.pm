@@ -258,7 +258,8 @@ Return a boolean of whether $pattern matches ending at the end of the Span.
   $span= $span->scan($pattern, $flags=0);
 
 Look for the first occurrence of a pattern in this Span.  Return a new Span describing where it
-was found.  The current Span is unchanged.
+was found, or undef if not found.  The current Span is unchanged.  This is I<not> a
+constant-time operation but can be made pretty close to one with the C<MATCH_CONST_TIME> flag.
 See L<Crypt::SecretBuffer/Match Flags> for the list of flags.
 
 =method copy
