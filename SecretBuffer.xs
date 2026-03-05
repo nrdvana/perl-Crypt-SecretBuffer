@@ -707,7 +707,7 @@ append_lenprefixed(buf, ...)
    secret_buffer *buf
    INIT:
       size_t bytes_needed= 0;
-      IV val_count, i;
+      IV i;
    PPCODE:
       /* Add up all the lengths and over-estimate 9 bytes for each length specifier */
       for (i= 1; i < items; i++) {
@@ -1218,6 +1218,7 @@ set_up_us_the_bom(self)
       secret_buffer_parse p;
       if (!secret_buffer_parse_init_from_sv(&p, self))
          croak("%s", p.error);
+      PERL_UNUSED_VAR(ix);
    PPCODE:
       if (p.lim - p.pos >= 3 && p.pos[0] == 0xEF && p.pos[1] == 0xBB && p.pos[2] == 0xBF) {
          span->encoding= SECRET_BUFFER_ENCODING_UTF8;
@@ -1326,7 +1327,6 @@ parse_lenprefixed(self, count = 1)
       secret_buffer_parse p;
       UV len;
       size_t ofs;
-      bool success;
       /* treat an invalid span as a bug, rather than returning it to the user in the err_out param */
       if (!secret_buffer_parse_init_from_sv(&p, self))
          croak("%s", p.error);
@@ -1388,7 +1388,6 @@ copy(self, ...)
       copy_to = 1
       append_to = 2
    INIT:
-      secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
       SV *dst_sv= NULL;
       int next_arg, dst_encoding= -1;
       secret_buffer_parse src;

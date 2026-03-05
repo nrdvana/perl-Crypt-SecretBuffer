@@ -49,6 +49,8 @@ if ($^O eq 'MSWin32') {
    $test->feature(HAVE_GETRANDOM => 'getrandom', { h => 'sys/random.h' });
 }
 
+$test->header('stdint.h');
+
 $test->header('stdbool.h');
 $test->feature(HAVE_BOOL      => 'bool x= true; return x == false;');
 
@@ -68,7 +70,7 @@ $dep->add_exported_c_api($_) for @exports;
 
 $dep->install('SecretBuffer.h', 'SecretBufferManualLinkage.h');
 $dep->add_xs('SecretBuffer.xs');
-$dep->add_pm(map { my $n= $_; $n =~ s/^lib/\$(INST_LIB)/; $_ => $n } <lib/*/*.pm>, <lib/*/*/*.pm>);
+$dep->add_pm(map { my $n= $_; $n =~ s/^lib/\$(INST_LIB)/; $_ => $n } <lib/*/*.pm>, <lib/*/*/*.pm>, <lib/*/*/*/*.pm>);
 $dep->add_typemaps('typemap');
 $dep->save_config('InstallFiles.pm');
 
@@ -99,6 +101,7 @@ my %WriteMakefileArgs = (
     "Exporter" => 0,
     "File::Spec" => 0,
     "File::Temp" => 0,
+    "IO::Handle" => 0,
     "Scalar::Util" => 0,
     "overload" => 0,
     "parent" => 0,
@@ -106,10 +109,11 @@ my %WriteMakefileArgs = (
     "warnings" => 0
   },
   "TEST_REQUIRES" => {
+    "Benchmark" => 0,
     "Data::Dumper" => 0,
     "Encode" => 0,
     "FindBin" => 0,
-    "IO::Handle" => 0,
+    "List::Util" => 0,
     "MIME::Base64" => 0,
     "POSIX" => 0,
     "Test2::Suite" => "0.000139",
@@ -118,7 +122,7 @@ my %WriteMakefileArgs = (
     "Time::HiRes" => 0,
     "lib" => 0
   },
-  "VERSION" => "0.016",
+  "VERSION" => "0.019",
   "test" => {
     "TESTS" => "t/*.t"
   }
@@ -130,6 +134,7 @@ my %WriteMakefileArgs = (
 );
 
 my %FallbackPrereqs = (
+  "Benchmark" => 0,
   "Carp" => 0,
   "Data::Dumper" => 0,
   "DynaLoader" => 0,
@@ -139,6 +144,7 @@ my %FallbackPrereqs = (
   "File::Temp" => 0,
   "FindBin" => 0,
   "IO::Handle" => 0,
+  "List::Util" => 0,
   "MIME::Base64" => 0,
   "POSIX" => 0,
   "Scalar::Util" => 0,

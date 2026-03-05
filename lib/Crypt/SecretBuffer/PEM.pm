@@ -6,7 +6,7 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util qw( blessed );
-use Crypt::SecretBuffer qw/ secret span MATCH_NEGATE MATCH_MULTI ISO8859_1 BASE64 /;
+use Crypt::SecretBuffer qw/ secret span MATCH_NEGATE MATCH_REVERSE MATCH_ANCHORED MATCH_MULTI ISO8859_1 BASE64 /;
 
 =head1 SYNOPSIS
 
@@ -49,6 +49,12 @@ Options:
 Boolean, whether the values of the PEM headers should be stored in L<Crypt::SecretBuffer::Span>
 objects.  Default is false.
 
+=item trim_headers
+
+Boolean.  The default is to trim leading and trailing whitespace from keys and values of the
+headers.  You can set this to false to preserve that whitespace (but the space following ':'
+always gets removed)
+
 =back
 
 =constructor parse_all
@@ -68,6 +74,8 @@ You can construct a PEM object from attributes, in case you want to serialize yo
 
 sub parse {
    my ($class, $span, %options)= @_;
+   my $secret_headers= !!$options{secret_headers};
+   my $notrim= !exists $options{trim_headers}? 0 : !$options{trim_headers};
    while (my $begin= $span->scan("-----BEGIN ")) {
       $span->pos($begin->lim);
       my $label= $span->parse(qr/[A-Z0-9 ]+/);
@@ -75,20 +83,24 @@ sub parse {
       $begin->lim($span->pos);
       my $label_str= '';
       $label->copy_to($label_str);
-      my $end= $span->scan("-----END $label_str-----");
+      # back up the span by 1 char so that it starts with \n, just in case there is an END
+      # line immediately following the BEGIN line.
+      $span->pos($span->pos-1);
+      my $end= $span->scan("\n-----END $label_str-----");
       unless ($end) {
-         warn "PEM begin marker for $label_str lacks an END marker";
+         carp "PEM begin marker for $label_str lacks an END marker";
          next;
       }
+      $end->ltrim("\n");
       $span->pos($end->lim);
-      $span->parse("\r");
-      $span->parse("\n"); # consume line ending
+      $span->ltrim("\r");
+      $span->ltrim("\n"); # consume line ending
 
       # Let block be its own SecretBuffer
       my $block= $span->clone(pos => $begin->pos, lim => $span->pos)->copy;
       my $inner= $block->span(pos => $begin->len, lim => $end->pos - $begin->pos);
       if (!$block->span($end->pos - $begin->pos - 1, 1)->ends_with("\n")) {
-         warn "PEM end marker found not at the start of a line";
+         carp "PEM end marker found not at the start of a line";
          next;
       }
       # Treat each line containing a ":" as a "name: value" header
@@ -96,13 +108,17 @@ sub parse {
       while (my $sep_or_eol= $inner->scan(qr/[:\n]/)) {
          if ($sep_or_eol->starts_with(':')) {
             my ($name, $value);
-            $inner->clone(lim => $sep_or_eol->pos)->copy_to($name);
+            my $name_span= $inner->clone(lim => $sep_or_eol->pos);
+            $name_span->trim unless $notrim;
+            $name_span->copy_to($name);
             $inner->pos($sep_or_eol->lim);
             my $eol= $inner->scan("\n") or die "BUG"; # inner ends with "\n", checked above
-            my $val_span= $inner->clone(lim => $eol->pos)
-               ->ltrim(' '); # remove one optional space character following ':'
+            my $val_span= $inner->clone(lim => $eol->pos);
+            # notrim means don't remove arbitrary leading/trailing whitespace.
+            # the space char after ':' is part of the specification, so should be removed.
+            $notrim? $val_span->ltrim(' ') : $val_span->trim;
             $inner->pos($eol->lim);
-            if ($options{secret_headers}) {
+            if ($secret_headers) {
                push @headers, $name, $val_span;
             } else {
                $val_span->copy_to($value);
@@ -115,7 +131,7 @@ sub parse {
                if ($sep_or_eol->pos == $inner->pos) { # "\n" at start of 'inner'
                   $inner->pos($sep_or_eol->lim);
                } else {
-                  warn "PEM headers for $label_str did not end with a blank line"
+                  carp "PEM headers for $label_str did not end with a blank line"
                }
             }
             last;
@@ -165,16 +181,31 @@ In this case the attribute would hold C<< 'SOME LABEL' >>.
 
 A L<Crypt::SecretBuffer> holding the complete PEM text from BEGIN marker to END marker, inclusive.
 
-=attribute headers
-
-PEM format has optional C<< 'NAME: VALUE' >> pairs that can appear right after the BEGIN marker.
-This presents them as a hashref.  Note that the values can be L<Span|Crypt::SecretBuffer::Span>
-objects if you used the C<secret_headers> option.
-
 =attribute header_kv
 
-To preserve order of headers, this attribute stores a list of
+PEM format has optional header C<< 'NAME: VALUE' >> pairs that can appear right after the
+BEGIN marker.  When parsed, leading and trailing whitespace are removed from keys and values.
+When written, keys and values may not contain leading or trailing whitespace, or any control
+characters.  This attribute presents them in their original order as an arrayref of
 C<< [ $key0, $value0, $key1, $value1, ... ] >>.
+
+Note that the values can be L<Span|Crypt::SecretBuffer::Span> objects if you used the
+C<secret_headers> option.
+
+=attribute headers
+
+  my $values_arrayref= $pem->headers->get_values('example');
+  my $value_maybe_arrayref= $pem->headers->{example};
+  $pem->headers->{example}= $value;
+  $pem->headers->append('example', $value);
+
+For convenience, you can access the headers by name using this attribute, which masquerades as
+L<both a hashref and an object with methods|Crypt::SecretBuffer::PEM::Headers>.
+This object/hashref only provides a view of the L<header_kv> array, and is not particularly
+efficient at reading or writing it.  (but, it's very convenient)
+
+If there are multiple header keys with the same name, the value returned for that name is an
+arrayref of all the values.
 
 =attribute content
 
@@ -185,14 +216,55 @@ for methods like C<length> or C<memcmp>.
 
 =cut
 
-sub buffer    { $_[0]{buffer}=    $_[1] if @_ > 1; $_[0]{buffer} }
-sub label     { $_[0]{label}=     $_[1] if @_ > 1; $_[0]{label} }
-sub headers   { $_[0]{headers}=   $_[1] if @_ > 1; $_[0]{headers} ||= $_[0]->_build_headers }
-sub header_kv { $_[0]{header_kv}= $_[1] if @_ > 1; $_[0]{header_kv} }
-sub content   { $_[0]{content}=   $_[1] if @_ > 1; $_[0]{content} }
+sub buffer         { $_[0]{buffer}=  $_[1] if @_ > 1; $_[0]{buffer} }
+sub label          { $_[0]{label}=   $_[1] if @_ > 1; $_[0]{label} }
+sub content        { $_[0]{content}= $_[1] if @_ > 1; $_[0]{content} }
+sub header_kv {
+   if (@_ > 1) {
+      _validate_header_kv($_[1]);
+      $_[0]{header_kv}= $_[1];
+      $_[0]{headers}->raw_kv_array($_[1])
+         if defined $_[0]{headers};
+   }
+   $_[0]{header_kv}
+}
+sub headers {
+   my $self= shift;
+   require Crypt::SecretBuffer::PEM::Headers;
+   $self->{headers} ||=
+      Crypt::SecretBuffer::PEM::Headers
+         ->new(raw_kv_array => $self->header_kv)
+         ->_create_tied_hashref;
+}
 
-sub _build_headers {
-   return { @{$_[0]{header_kv}} };
+sub _validate_header_kv {
+   my $kv= shift;
+   croak "Expected even-length arrayref"
+      unless ref $kv eq 'ARRAY' && ($#$kv & 1);
+   for (0..($#$kv-1)/2) {
+      my ($k, $v)= ($kv->[$_*2], $kv->[$_*2+1]);
+      croak "PEM header Key is undefined"
+         unless defined $k;
+      croak "PEM Header name '$k' contains wide characters"
+         unless utf8::downgrade($k, 1);
+      # Sanity checks, key cannot contain control chars or ':' or leading or trailing whitespace
+      croak "PEM Header name '$k' contains ':' or control characters"
+         if $k =~ /[\0-\x1F\x7F:]/;
+      carp "PEM header name '$k' contains leading/trailing whitespace"
+         if $k =~ /^\s/ or $k =~ /\s\z/;
+      croak "PEM header value for '$k' is undefined"
+         unless defined $v;
+      my $is_secret= blessed($v) && ($v->isa('Crypt::SecretBuffer::Span') || $v->isa('Crypt::SecretBuffer'));
+      croak "PEM header value for $k' contains wide characters"
+         unless $is_secret || utf8::downgrade($v, 1);
+      croak "PEM header value for '$k' contains control characters"
+         if $is_secret? ($v->scan(qr/[\0-\x1F\x7F]/))
+                      : ($v =~ /[\0-\x1F\x7F]/);
+      carp "PEM header value for '$k' contains leading/trailing whitespace"
+         if $is_secret? ($v->scan(qr/[\s]/, MATCH_ANCHORED) or $v->scan(qr/[\s]/, MATCH_ANCHORED|MATCH_REVERSE))
+                      : ($v =~ /^\s/ or $v =~ /\s\z/);
+   }
+   1;
 }
 
 =method serialize
@@ -207,20 +279,13 @@ falling back to the L</headers> hashref.
 sub serialize {
    my $self= shift;
    my $out= secret('-----BEGIN '.$self->label."-----\n");
-   my @header_kv= $self->header_kv? @{ $self->header_kv }
-                : $self->headers? %{ $self->headers }
-                : ();
+   my @header_kv= @{ $self->header_kv || [] };
    if (@header_kv) {
-      while (@header_kv) {
-         my ($k, $v)= splice @header_kv, 0, 2;
-         # Sanity checks, key cannot contain control chars or ':'
-         croak "PEM Header name '$k' contains ':' or control characters"
-            if $k =~ /[\0-\x1F:]/;
-         croak "PEM header value for '$k' must be defined"
-            unless defined $v;
-         croak "PEM header value for '$k' contains a newline"
-            if blessed($v) && $v->can('scan')? $v->scan("\n") : $v =~ /\n/;
-         $out->append("$k: ")->append($v)->append("\n");
+      # re-validate since individual values are mutable and may have changed since the
+      # attribute was assigned.
+      _validate_header_kv(\@header_kv);
+      for (0..$#header_kv) {
+         $out->append($header_kv[$_])->append($_ & 1? "\n" : ": ");
       }
       $out->append("\n"); # empty line terminates headers
    }

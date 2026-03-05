@@ -147,8 +147,8 @@ bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
          /* Likewise, if SECRET_BUFFER_ENCODING_UTF8's I32 len is exactly 4x the number of
           * original bytes, that means every byte became a character, which means every
           * character could fit in a byte. */
-         || pat_parse.encoding == SECRET_BUFFER_ENCODING_UTF8
-            && dst_len == (pat_parse.lim - pat_parse.pos) * 4
+         || (pat_parse.encoding == SECRET_BUFFER_ENCODING_UTF8
+            && dst_len == (pat_parse.lim - pat_parse.pos) * 4)
       ) {
          pat_parse.encoding= SECRET_BUFFER_ENCODING_ISO8859_1;
       } else {
@@ -386,14 +386,13 @@ secret_buffer_copy_to(secret_buffer_parse *src, SV *dst_sv, int encoding, bool a
       if (!append)
          secret_buffer_set_len(dst_sbuf, 0); /* clears secrets */
       secret_buffer_alloc_at_least(dst_sbuf, dst_sbuf->len + need_bytes);
-      dst.pos= dst_sbuf->data + dst_sbuf->len;
+      dst.pos= (U8*) dst_sbuf->data + dst_sbuf->len;
       dst.lim= dst.pos + need_bytes;
    }
    else {
       // For destination SV, set length to 0 unless appending, then force it to
       // be bytes or utf-8, then grow it to ensure room for additional `need_bytes`.
       STRLEN len;
-      char *pv;
       // If overwriting, set the length to 0 before forcing to bytes or utf8
       if (!append)
          sv_setpvn(dst_sv, "", 0);
@@ -402,7 +401,7 @@ secret_buffer_copy_to(secret_buffer_parse *src, SV *dst_sv, int encoding, bool a
       else SvPVbyte(dst_sv, len);
       // grow it to the required length, for writing
       sv_grow(dst_sv, (append? len : 0) + need_bytes + 1);
-      dst.pos= SvPVX_mutable(dst_sv) + len;
+      dst.pos= (U8*) SvPVX_mutable(dst_sv) + len;
       dst.lim= dst.pos + need_bytes;
       // don't forget the NUL terminator
       *dst.lim= '\0';
@@ -450,7 +449,7 @@ secret_buffer_append_uv_asn1_der_length(secret_buffer *buf, UV val) {
     */
    ASSUME(enc_len < 127);
    secret_buffer_set_len(buf, buf->len + enc_len);
-   pos= buf->data + buf->len - 1;
+   pos= (U8*) buf->data + buf->len - 1;
    if (val <= 127) {
       *pos = (U8) val;
    } else {
@@ -471,7 +470,6 @@ secret_buffer_parse_uv_asn1_der_length(secret_buffer_parse *parse, UV *out) {
    U8 *pos = parse->pos;
    U8 *lim = parse->lim;
    UV result;
-   int n;
 
    if (pos >= lim) {
       parse->error = "unexpected end of buffer";
@@ -544,7 +542,7 @@ secret_buffer_append_uv_base128le(secret_buffer *buf, UV val) {
       tmp >>= 7;
    }
    secret_buffer_set_len(buf, buf->len + enc_len);
-   pos= buf->data + buf->len - enc_len;
+   pos= (U8*) buf->data + buf->len - enc_len;
    /* Encode */
    tmp= val;
    do {
@@ -616,7 +614,7 @@ secret_buffer_append_uv_base128be(secret_buffer *buf, UV val) {
       tmp >>= 7;
    }
    secret_buffer_set_len(buf, buf->len + enc_len);
-   pos= buf->data + buf->len - enc_len;
+   pos= (U8*) buf->data + buf->len - enc_len;
    /* Encode */
    for (shift= (enc_len-1) * 7; shift >= 0; shift -= 7) {
       U8 byte = (U8)((val >> shift) & 0x7F);
@@ -633,7 +631,6 @@ secret_buffer_parse_uv_base128be(secret_buffer_parse *parse, UV *out) {
    U8 *pos = parse->pos;
    U8 *lim = parse->lim;
    UV result= 0;
-   int shift= 0;
 
    if (pos >= lim) {
       parse->error = "unexpected end of buffer";
