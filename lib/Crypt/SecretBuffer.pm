@@ -908,5 +908,8 @@ instructions how to report security vulnerabilities.
 
 =cut
 
+# avoid depending on namespace::clean
+delete @{Crypt::SecretBuffer::}{qw( carp croak confess )};
+
 require Crypt::SecretBuffer::Span;
 1;

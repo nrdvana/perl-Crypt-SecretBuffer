@@ -390,4 +390,9 @@ sub parse {
    return $root;
 }
 
+# avoid depending on namespace::clean
+delete @{Crypt::SecretBuffer::INI::}{qw(
+   carp confess croak secret MATCH_NEGATE MATCH_MULTI ISO8859_1
+)};
+
 1;

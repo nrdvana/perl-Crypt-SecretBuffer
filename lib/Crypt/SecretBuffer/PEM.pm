@@ -296,4 +296,10 @@ sub serialize {
    return $out;
 }
 
+# avoid depending on namespace::clean
+delete @{Crypt::SecretBuffer::PEM::}{qw(
+   carp confess croak blessed secret span MATCH_NEGATE MATCH_REVERSE MATCH_ANCHORED MATCH_MULTI
+   ISO8859_1 BASE64
+)};
+
 1;

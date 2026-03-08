@@ -4,6 +4,7 @@ package Crypt::SecretBuffer::PEM::Headers;
 
 use strict;
 use warnings;
+use Scalar::Util 'blessed';
 use Carp;
 use Crypt::SecretBuffer qw( span );
 if ("$]" <  5.016) {
@@ -346,5 +347,8 @@ sub Crypt::SecretBuffer::PEM::Headers::_Proxy::get_array      { tied(%{+shift})-
 sub Crypt::SecretBuffer::PEM::Headers::_Proxy::set            { tied(%{+shift})->[0]->set(@_) }
 sub Crypt::SecretBuffer::PEM::Headers::_Proxy::delete         { tied(%{+shift})->[0]->delete(@_) }
 sub Crypt::SecretBuffer::PEM::Headers::_Proxy::append         { tied(%{+shift})->[0]->append(@_) }
+
+# avoid depending on namespace::clean
+delete @{Crypt::SecretBuffer::PEM::Headers::}{qw( carp croak confess span fc blessed )};
 
 1;

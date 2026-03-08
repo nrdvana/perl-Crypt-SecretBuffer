@@ -242,4 +242,18 @@ subtest header_unicode => sub {
    is( $pem->serialize->memcmp($canonical), 0, 'serialize' );
 };
 
+my %perl_internal= map +($_ => 1), qw( isa can import );
+subtest clean_namespace => sub {
+   my $ns= \%Crypt::SecretBuffer::PEM::;
+   my @public= qw( buffer content header_kv headers label new parse parse_all serialize );
+   is( [ grep /^[a-z]/ && !$perl_internal{$_}, sort keys %$ns ], \@public, 'PEM' )
+      or diag explain $ns;
+
+   $ns= \%Crypt::SecretBuffer::PEM::Headers::;
+   @public= qw( append caseless_keys delete get get_array keys new raw_kv_array set trim_keys
+                unicode_keys unicode_values );
+   is( [ grep /^[a-z]/ && !$perl_internal{$_}, sort keys %$ns ], \@public, 'PEM::Headers' )
+      or diag explain $ns;
+};
+
 done_testing;
