@@ -207,6 +207,9 @@ sub get_array {
    my $ret= $self->_find_key_idx($key);
    my $kv= $self->{raw_kv_array};
    $_= $kv->[$_+1] for @$ret;
+   if ($self->unicode_values) {
+      utf8::decode($_) for @$ret
+   }
    return $ret;
 }
 

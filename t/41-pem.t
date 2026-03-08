@@ -207,4 +207,39 @@ subtest header_tied_hash_obj => sub {
    is( { %{$pem->headers} }, { A => [1,2,3] }, 'dump headers hash with casefolding and trim' );
 };
 
+subtest header_unicode => sub {
+   my $canonical= "-----BEGIN SOMETHING-----\n"
+                . "\xE8\xA9\xA6: -\xE8\xA9\xA6-\n"
+                . "\n"
+                . "VGVzdA==\n"
+                . "-----END SOMETHING-----\n";
+   my $pem= Crypt::SecretBuffer::PEM->parse(secret($canonical)->span);
+   is( $pem,
+       object {
+         call label => 'SOMETHING';
+         # should be bytes
+         call header_kv => [
+            "\xE8\xA9\xA6", "-\xE8\xA9\xA6-",
+         ];
+         call headers => object {
+            call [ unicode_keys => 1 ], T;
+            call [ unicode_values => 1 ], T;
+            # should be unicode
+            call [ get => "\x{8A66}" ] => "-\x{8A66}-";
+         };
+         # original scalars should be unchanged
+         call header_kv => [
+            "\xE8\xA9\xA6", "-\xE8\xA9\xA6-",
+         ];
+         call content => object {
+            call [ memcmp => "VGVzdA==\n" ], 0;
+            call [ cmp => "Test" ], 0;
+         };
+       },
+       'parse'
+   ) or diag explain $pem;
+
+   is( $pem->serialize->memcmp($canonical), 0, 'serialize' );
+};
+
 done_testing;
