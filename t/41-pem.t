@@ -193,4 +193,18 @@ subtest header_manipulation => sub {
       'added new key/value' );
 };
 
+subtest header_tied_hash_obj => sub {
+   my $pem= Crypt::SecretBuffer::PEM->new(
+      content => 'example',
+      header_kv => [
+         A => 1,
+         a => 2,
+         ' A ' => 3,
+      ]
+   );
+   is( { %{$pem->headers} }, { A => 1, a => 2, ' A ' => 3 }, 'dump headers hash' );
+   $pem->headers->caseless_keys(1)->trim_keys(1);
+   is( { %{$pem->headers} }, { A => [1,2,3] }, 'dump headers hash with casefolding and trim' );
+};
+
 done_testing;
