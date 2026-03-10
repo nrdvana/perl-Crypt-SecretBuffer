@@ -1,3 +1,5 @@
+  - Fix ->save_file(x, 'rename') when the path was a bare filename
+
 Version 0.020 - 2026-03-08
   - Fix bugs in ::PEM->headers (unicode_values, call methods on tied hash)
 

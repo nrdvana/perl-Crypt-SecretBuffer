@@ -835,7 +835,8 @@ sub save_file {
       require File::Temp;
       require File::Spec;
       my ($vol, $dir, $file)= File::Spec->splitpath($path);
-      $fh= File::Temp->new(DIR => File::Spec->catpath($vol, $dir, ''));
+      my $dest_dir= File::Spec->catpath($vol, $dir, '');
+      $fh= File::Temp->new(DIR => (length($dest_dir)? $dest_dir : File::Spec->curdir));
       $cur_path= "$fh";
    } else {
       open $fh, '>', $path or croak "open($path): $!";
