@@ -1,3 +1,4 @@
+Version 0.021 - 2026-03-12
   - Fix ->save_file(x, 'rename') when the path was a bare filename
   - Enhance append_console_line:
      - echo "\n" back to console when 'prompt' option is used
