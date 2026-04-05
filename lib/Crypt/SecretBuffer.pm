@@ -358,20 +358,23 @@ Erases the buffer.  Equivalent to C<< $buf->length(0) >>.  Returns C<$self> for 
 Replace a span of bytes in the buffer with a new value.  C<$offset> and C<$length> may be
 negative to reference backward from the end of the buffer.  The replacement may be another
 C<SecretBuffer>, a L<Span|Crypt::SecretBuffer::Span>, a scalar, a scalar-ref.
+This copies raw bytes even if the replacement is a Span with an encoding.
 
 Returns C<$self>, for chaining.  If you want to return the replaced span, use C<substr>.
 
 =method assign
 
-  $buf->assign($replacement);
+  $buf->assign($replacement, ...);
 
-Alias for C<< $buf->splice(0, $buf->length, $replacemenmt) >>.
+Replace contents of buffer with bytes of C<$replacement>, concatenating multiple arguments.
+This copies raw bytes even if the replacement is a Span with an encoding.
 
 =method append
 
-  $buf->append($data)
+  $buf->append($data, ...)
 
-Alias for C<< $buf->splice($buf->length, 0, $replacemenmt) >>.
+Append contents of buffer with bytes of C<$data>, concatenating multiple arguments.
+This copies raw bytes even if the replacement is a Span with an encoding.
 
 =method substr
 
