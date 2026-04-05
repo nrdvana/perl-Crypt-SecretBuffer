@@ -143,6 +143,7 @@ use warnings;
 use Carp;
 use IO::Handle;
 use Scalar::Util ();
+use Fcntl ();
 use parent qw( DynaLoader );
 use overload '""' => \&stringify,
              'cmp' => \&memcmp;
@@ -867,14 +868,19 @@ at each step.
 sub load_file {
    my ($self, $path)= @_;
    open my $fh, '<', $path or croak "open($path): $!";
-   my $blocksize= -s $path;
+   my $chunksize= -s $fh;
+   if (!$chunksize) {
+      $chunksize= sysseek($fh, 0, Fcntl::SEEK_END);
+      sysseek($fh, 0, Fcntl::SEEK_SET);
+   }
+   $chunksize ||= 64*1024; # if stat doesn't report size and not seekable, just try 64K
    while (1) {
-      my $got= $self->append_sysread($fh, $blocksize);
+      my $got= $self->append_sysread($fh, $chunksize);
       defined $got or croak "sysread($path): $!";
       last if $got == 0;
       # should have read the whole thing first try, but file could be changing, so keep going
-      # at 16K intervals until EOF.
-      $blocksize= 16*1024 if $blocksize > 16*1024;
+      # at 64K intervals until EOF.
+      $chunksize= 64*1024;
    }
    close($fh) or croak "close($path): $!";
    return $self;
