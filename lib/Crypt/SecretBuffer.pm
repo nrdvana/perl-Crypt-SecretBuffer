@@ -873,8 +873,8 @@ sub load_file {
    open my $fh, '<', $path or croak "open($path): $!";
    my $chunksize= -s $fh;
    if (!$chunksize) {
-      $chunksize= sysseek($fh, 0, Fcntl::SEEK_END);
-      sysseek($fh, 0, Fcntl::SEEK_SET);
+      $chunksize= sysseek($fh, 0, Fcntl::SEEK_END());
+      sysseek($fh, 0, Fcntl::SEEK_SET());
    }
    $chunksize ||= 64*1024; # if stat doesn't report size and not seekable, just try 64K
    while (1) {
