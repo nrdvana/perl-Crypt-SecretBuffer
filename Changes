@@ -1,3 +1,7 @@
+Version 0.023 - 2026-04-05
+  - Fix 5.8 compat
+  - Documentation fix on ->append and ->assign
+
 Version 0.022 - 2026-04-05
   - Fix ->load_file when the path is a device node (or where -s fails)
   - Allow multiple arguments to ->append and ->assign
