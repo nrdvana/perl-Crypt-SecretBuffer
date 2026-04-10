@@ -1086,6 +1086,15 @@ restore(cstate)
    OUTPUT:
       RETVAL
 
+bool
+wait_char_readable(cstate, timeout_sv=&PL_sv_undef)
+   sb_console_state *cstate
+   SV *timeout_sv
+   CODE:
+      RETVAL= sb_console_state_wait_char_readable(aTHX_ cstate, timeout_sv);
+   OUTPUT:
+      RETVAL
+
 MODULE = Crypt::SecretBuffer           PACKAGE = Crypt::SecretBuffer::Span
 
 void
