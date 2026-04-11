@@ -346,7 +346,7 @@ bool sb_wait_fd_readable(pTHX_ int stream_fd, SV *timeout_sv) {
          tv_p= &tv;
       }
 
-      r = select(stream_fd + 1, &rfds, NULL, NULL, NULL);
+      r = select(stream_fd + 1, &rfds, NULL, NULL, tv_p);
       if (r < 0 && errno != EINTR)
          croak_with_syserror("select failed", errno);
       return (r > 0);

@@ -553,6 +553,8 @@ of bytes and never blocks.
   # char_count => $n                    return success only at exactly N characters
   # char_max   => $n                    stop adding characters after $n added
   # char_class => qr/[...]/             limit to members of character class
+  # timeout    => $seconds              abort collecting characters, return undef
+  # state      => \%state               track state across calls
 
 This turns off TTY echo (if the handle is a Unix TTY or Windows Console) and reads and appends
 characters until newline or EOF (and does not store the \r or \n characters).
@@ -617,6 +619,20 @@ Restrict the permitted characters.  This must be a Regexp-ref of a single charac
 Any character the user enters which is not in this class will be ignored and not added to the
 buffer.
 
+=item timeout
+
+If a complete line has not been received within this number of seconds (may be fractional or
+zero) return C<undef> and set C<$!> to C<EINTR>.  This can be combined with C<state> to get the
+rough equivalent of nonblocking behavior.
+
+=item state
+
+On an error, store the state of prompt collection into this hashref.  Passing the same hashref
+to the next call will resume the password prompt where it left off.  If you destroyed the
+printed state of the prompt on the terminal inbetween calls, set field
+C<< $state->{re_prompt} = 1 >> to request re-printing the prompt.  Beware that you need to
+clear this hashref to trigger a restore of the console's 'echo' state flag.
+
 =back
 
 When using options C<char_mask>, C<char_count>, or C<char_class>, the TTY line-input mode is
@@ -652,10 +668,22 @@ sub append_console_line {
       %options= @_;
       $input_fh= delete $options{input_fh};
    }
-   my ($prompt, $prompt_fh, $char_mask, $char_count, $char_max, $char_class)
-      = delete @options{qw( prompt prompt_fh char_mask char_count char_max char_class )};
+   my ($prompt, $prompt_fh, $char_mask, $char_count, $char_max, $char_class, $timeout, $state)
+      = delete @options{qw( prompt prompt_fh char_mask char_count char_max char_class timeout state )};
    warn "unknown option: ".join(', ', keys %options)
       if keys %options;
+   my ($print_prompt, $ttystate, $start_len)= (defined $prompt, undef, $self->length);
+   if ($state && defined $state->{start_len}) {
+      $ttystate=   $state->{ttystate};
+      $start_len=  $state->{start_len};
+      $input_fh=   $state->{input_fh}   unless defined $input_fh;
+      $prompt_fh=  $state->{prompt_fh}  unless defined $prompt_fh;
+      $char_mask=  $state->{char_mask}  unless defined $char_mask;
+      $char_count= $state->{char_count} unless defined $char_count;
+      $char_max=   $state->{char_max}   unless defined $char_max;
+      $char_class= $state->{char_class} unless defined $char_class;
+      $print_prompt= delete $state->{re_prompt};
+   }
    my ($reading_from, $writing_to)= ('supplied handle', 'supplied handle');
    if (!defined $input_fh) {
       # user is requesting a read from the controlling terminal
@@ -703,23 +731,30 @@ sub append_console_line {
    }
    # If the user wants control over the keypresses, need to disable line-editing mode.
    # ConsoleState obj with auto_restore restores the console state when it goes out of scope.
-   my $input_by_chars= defined $char_mask || defined $char_count || defined $char_class;
-   my $ttystate= Crypt::SecretBuffer::ConsoleState->maybe_new(
-      handle => $input_fh,
-      echo => 0,
-      (line_input => 0)x!!$input_by_chars,
-      auto_restore => 1
-   );
+   my $input_by_chars= defined $char_mask || defined $char_count || defined $char_class || defined $timeout;
+   $ttystate ||= Crypt::SecretBuffer::ConsoleState->maybe_new(handle => $input_fh);
+   if ($ttystate && $ttystate->echo) {
+      $ttystate->auto_restore(1);
+      $ttystate->echo(0);
+   }
+   if ($ttystate && $ttystate->line_input && $input_by_chars) {
+      $ttystate->auto_restore(1);
+      $ttystate->line_input(0);
+   }
    # Write the initial prompt
-   if (defined $prompt) {
-      $prompt_fh->print($prompt) && $prompt_fh->flush
+   if ($print_prompt) {
+      my $suffix= '';
+      if ($state && defined $state->{start_len} && defined $char_mask) {
+         my $n= $self->len - $state->{start_len};
+         $suffix= $char_mask x $n;
+      }
+      $prompt_fh->print($prompt . $suffix) && $prompt_fh->flush
          or croak "Failed to write $writing_to: $!";
    }
-   my $start_len= $self->length;
    my $ret;
    if ($input_by_chars) {
       while (1) {
-         $ret= $self->append_read($input_fh, 1)
+         $ret= $self->append_read($input_fh, 1, $timeout)
             or last;
          # Handle control characters
          my $end_pos= $self->length - 1;
@@ -778,14 +813,30 @@ sub append_console_line {
          $self->length($start_len + $char_max);
       }
    }
+   # timeout or system error (including EINTR and EAGAIN)
+   if (!defined $ret) {
+      # save state, if requested
+      if ($state) {
+         $state->{input_fh}=   $input_fh;
+         $state->{prompt_fh}=  $prompt_fh;
+         $state->{char_mask}=  $char_mask;
+         $state->{char_count}= $char_count;
+         $state->{char_max}=   $char_max;
+         $state->{char_class}= $char_class;
+         $state->{ttystate}=   $ttystate;
+         $state->{start_len}=  $start_len;
+      }
+      return undef;
+   }
    # If we're responsible for the prompt, also echo the newline to the user so that the caller
    # doesn't need to figure out what to use for $prompt_fh.
    $prompt_fh->print("\n") && $prompt_fh->flush
       if defined $prompt;
-
-   return !$ret? $ret
-      : $char_count? $self->length - $start_len == $char_count
-      : 1;
+   # Not a temporary failuire.  Wipe the state.
+   %$state= () if $state;
+   return !$ret? 0
+        : $char_count? $self->length - $start_len == $char_count
+        : 1;
 }
 
 =method append_sysread

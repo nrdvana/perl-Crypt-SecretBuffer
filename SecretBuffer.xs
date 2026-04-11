@@ -806,8 +806,10 @@ append_sysread(buf, handle, count, timeout_sv= NULL)
       IV got;
    PPCODE:
       if (timeout_sv && SvOK(timeout_sv)) {
-         if (!sb_wait_fd_readable(aTHX_ PerlIO_fileno(handle), timeout_sv))
+         if (!sb_wait_fd_readable(aTHX_ PerlIO_fileno(handle), timeout_sv)) {
+            errno = EINTR;
             XSRETURN_UNDEF;
+         }
       }
       got= secret_buffer_append_sysread(buf, handle, count);
       if (got < 0) {
@@ -826,8 +828,10 @@ append_read(buf, handle, count, timeout_sv= NULL)
       int got;
    PPCODE:
       if (timeout_sv && SvOK(timeout_sv)) {
-         if (!sb_wait_fh_readable(aTHX_ handle, timeout_sv))
+         if (!sb_wait_fh_readable(aTHX_ handle, timeout_sv)) {
+            errno = EINTR;
             XSRETURN_UNDEF;
+         }
       }
       got= secret_buffer_append_read(buf, handle, count);
       ST(0)= (got < 0)? &PL_sv_undef : sv_2mortal(newSViv(got));

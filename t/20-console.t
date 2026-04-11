@@ -116,6 +116,52 @@ subtest 'parent/child pipe communication' => sub {
    close($read_fh);
 };
 
+subtest 'timeout loop' => sub {
+   pipe(my $parent_r, my $child_w) or die "Cannot create pipe: $!";
+   pipe(my $prompt_r, my $prompt_w) or die "Cannot create pipe: $!";
+   
+   my $pid = fork();
+   die "Cannot fork: $!" unless defined $pid;
+   
+   if ($pid == 0) {
+      # Child process
+      $parent_r->close;
+      $child_w->print("secret ");
+      $child_w->flush;
+      sleep 1;
+      $child_w->print("from child process\n");
+      exit(0);
+   }
+   
+   # Parent process
+   $child_w->close;
+   my $buf = Crypt::SecretBuffer->new();
+   my $timeouts= 0;
+   my $result;
+   my %state;
+   while (1) {
+      $result = $buf->append_console_line(
+         input_fh => $parent_r, prompt_fh => $prompt_w,
+         prompt => 'password: ',
+         timeout => .2, state => \%state
+      );
+      last if defined $result or !$!{EINTR};
+      ++$timeouts;
+   }
+
+   is($result, T, 'append_console_line returns true when reading from child process pipe');
+   ok($timeouts > 0, 'more than one timeout');
+   is($buf->length, 25, 'buffer contains correct number of characters from child process');
+   $prompt_w->close;
+   is( do { local $/= undef; scalar <$prompt_r>; }, "password: \n", 'prompt got written once' );
+   
+   $buf->{stringify_mask} = undef;
+   is("$buf", 'secret from child process', 'content from child process is correct');
+
+   kill -TERM => $pid;
+   waitpid($pid, 0);
+   close($parent_r);
+};
 
 # Main test block for TTY functionality
 subtest 'TTY functionality' => sub {
