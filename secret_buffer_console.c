@@ -229,63 +229,7 @@ static void sb_console_state_destroy(pTHX_ sb_console_state *state) {
 
 static bool
 sb_console_state_wait_char_readable(pTHX_ sb_console_state *state, SV *timeout_sv) {
-   DWORD wait_ms, res;
-   bool infinite = true;
-
-   if (timeout_sv && SvOK(timeout_sv)) {
-      NV timeout = SvNV(timeout_sv);
-      if (timeout < 0)
-         croak("timeout must be >= 0");
-      infinite = false;
-      if (timeout > (NV)0xFFFFFFFF / 1000.0)
-         wait_ms = 0xFFFFFFFF;
-      else
-         wait_ms = (DWORD) (timeout * 1000.0 + 0.5);
-   }
-   else {
-      wait_ms = INFINITE;
-   }
-
-   while (1) {
-      INPUT_RECORD rec;
-      DWORD nread;
-
-      res = WaitForSingleObject(state->hdl, wait_ms);
-      if (res == WAIT_TIMEOUT)
-         return false;
-      if (res != WAIT_OBJECT_0)
-         croak_with_syserror("WaitForSingleObject failed", GetLastError());
-
-      /* Inspect pending console events until we find a real character-producing key event.
-       * Discard non-character events so we don't wake forever on the same unread record.
-       */
-      if (!PeekConsoleInput(state->hdl, &rec, 1, &nread))
-         croak_with_syserror("PeekConsoleInput failed", GetLastError());
-
-      if (nread == 0) {
-         /* Should be rare after WAIT_OBJECT_0, but harmless to retry. */
-         if (infinite)
-            continue;
-         wait_ms = 0;
-         continue;
-      }
-
-      is_key= (rec.EventType == KEY_EVENT
-          && rec.Event.KeyEvent.bKeyDown
-          && rec.Event.KeyEvent.uChar.UnicodeChar != 0);
-      secret_buffer_wipe(&rec, sizeof(rec));
-      if (is_key) return true;
-
-      if (!ReadConsoleInput(state->hdl, &rec, 1, &nread))
-         croak_with_syserror("ReadConsoleInput failed", GetLastError());
-      secret_buffer_wipe(&rec, sizeof(rec));
-
-      /* After the first blocking wait, drain any non-character events and then return.
-       * rather than trying to calculate how much time is left.  The caller should always
-       * expect the possibility of an early return. */
-      if (!infinite)
-         wait_ms = 0;
-   }
+   return sb_wait_win32handle_readable(aTHX_ state->hdl, timeout_sv);
 }
 
 #else /* not WIN32 */
@@ -369,33 +313,7 @@ static void sb_console_state_destroy(pTHX_ sb_console_state *state) {
 
 static bool
 sb_console_state_wait_char_readable(pTHX_ sb_console_state *state, SV *timeout_sv) {
-   fd_set rfds;
-   int r;
-   struct timeval tv, *tv_p= NULL;
-
-   FD_ZERO(&rfds);
-   FD_SET(state->fd, &rfds);
-
-   if (timeout_sv && SvOK(timeout_sv)) {
-      NV timeout = SvNV(timeout_sv);
-      if (timeout < 0)
-         croak("timeout must be >= 0");
-
-      tv.tv_sec  = (long) timeout;
-      tv.tv_usec = (long) ((timeout - (NV) tv.tv_sec) * 1000000.0);
-      if (tv.tv_usec < 0)
-         tv.tv_usec = 0;
-      if (tv.tv_usec >= 1000000) {
-         tv.tv_sec += tv.tv_usec / 1000000;
-         tv.tv_usec %= 1000000;
-      }
-      tv_p= &tv;
-   }
-
-   r = select(state->fd + 1, &rfds, NULL, NULL, NULL);
-   if (r < 0 && errno != EINTR)
-      croak_with_syserror("select failed", errno);
-   return (r > 0);
+   return sb_wait_fd_readable(aTHX_ state->fd, timeout_sv);
 }
 
 #endif

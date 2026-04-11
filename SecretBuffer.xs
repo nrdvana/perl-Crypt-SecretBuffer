@@ -40,7 +40,11 @@ typedef struct secret_buffer_byte_range {
 
 // For typemap
 typedef secret_buffer_span *auto_secret_buffer_span;
+
 int sb_parse_codepointcmp(secret_buffer_parse *lhs, secret_buffer_parse *rhs);
+
+bool sb_wait_fd_readable(pTHX_ int stream_fd, SV *timeout);
+bool sb_wait_fh_readable(pTHX_ PerlIO *stream, SV *timeout);
 
 /**********************************************************************************************\
 * XS Utils
@@ -793,25 +797,38 @@ append_random(buf, count, flags=0)
       RETVAL
 
 void
-append_sysread(buf, handle, count)
+append_sysread(buf, handle, count, timeout_sv= NULL)
    auto_secret_buffer buf
    PerlIO *handle
    IV count
+   SV *timeout_sv
    INIT:
       IV got;
    PPCODE:
+      if (timeout_sv && SvOK(timeout_sv)) {
+         if (!sb_wait_fd_readable(aTHX_ PerlIO_fileno(handle), timeout_sv))
+            XSRETURN_UNDEF;
+      }
       got= secret_buffer_append_sysread(buf, handle, count);
-      ST(0)= (got < 0)? &PL_sv_undef : sv_2mortal(newSViv(got));
-      XSRETURN(1);
+      if (got < 0) {
+         XSRETURN_UNDEF;
+      } else {
+         PUSHs(sv_2mortal(newSViv(got)));
+      }
 
 void
-append_read(buf, handle, count)
+append_read(buf, handle, count, timeout_sv= NULL)
    auto_secret_buffer buf
    PerlIO *handle
    IV count
+   SV *timeout_sv
    INIT:
       int got;
    PPCODE:
+      if (timeout_sv && SvOK(timeout_sv)) {
+         if (!sb_wait_fh_readable(aTHX_ handle, timeout_sv))
+            XSRETURN_UNDEF;
+      }
       got= secret_buffer_append_read(buf, handle, count);
       ST(0)= (got < 0)? &PL_sv_undef : sv_2mortal(newSViv(got));
       XSRETURN(1);

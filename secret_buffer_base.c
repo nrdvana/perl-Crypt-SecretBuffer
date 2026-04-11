@@ -247,6 +247,119 @@ IV secret_buffer_append_random(secret_buffer *buf, size_t n, unsigned flags) {
    return (IV)(buf->len - orig_len);
 }
 
+#ifdef WIN32
+bool sb_wait_win32handle_readable(pTHX_ HANDLE hdl, SV *timeout_sv) {
+   DWORD ready, wait_ms;
+
+   if (timeout_sv && SvOK(timeout_sv)) {
+      NV timeout = SvNV(timeout_sv);
+      if (timeout < 0)
+         croak("timeout must be >= 0");
+      if (timeout > (NV)0xFFFFFFFF / 1000.0)
+         wait_ms = 0xFFFFFFFF;
+      else
+         wait_ms = (DWORD) (timeout * 1000.0 + 0.5);
+   }
+   else {
+      wait_ms = INFINITE;
+   }
+
+   while (1) {
+      INPUT_RECORD in_rec[16];
+      DWORD i, nread;
+      bool is_key;
+
+      ready = WaitForSingleObject(hdl, wait_ms);
+      if (ready == WAIT_TIMEOUT)
+         return false;
+      if (ready != WAIT_OBJECT_0)
+         croak_with_syserror("WaitForSingleObject failed", GetLastError());
+
+      /* After the first blocking wait, drain any non-character events and then return.
+       * rather than trying to calculate how much time is left.  The caller should always
+       * expect the possibility of an early return. */
+      if (wait_ms != INFINITE)
+         wait_ms = 0;
+
+      /* Inspect pending console events until we find a real character-producing key event.
+       * Discard non-character events so we don't wake forever on the same unread record.
+       */
+      if (PeekConsoleInput(hdl, in_rec, sizeof(in_rec)/sizeof(*in_rec), &nread)) {
+         for (i= 0; i < nread; i++) {
+            /* is it a key? */
+            if (in_rec[i].EventType == KEY_EVENT
+                && in_rec[i].Event.KeyEvent.bKeyDown
+                && in_rec[i].Event.KeyEvent.uChar.UnicodeChar != 0
+            )
+               break;
+         }
+         secret_buffer_wipe((char*) in_rec, sizeof(in_rec));
+         /* discard the non-char events */
+         if (i > 0) {
+            DWORD nread2;
+            if (!ReadConsoleInput(hdl, in_rec, i, &nread2))
+               croak_with_syserror("ReadConsoleInput failed", GetLastError());
+            secret_buffer_wipe((char*) in_rec, sizeof(in_rec));
+         }
+         if (i == nread)
+            continue;
+      }
+
+      return true;
+   }
+}
+#endif
+
+
+bool sb_wait_fd_readable(pTHX_ int stream_fd, SV *timeout_sv) {
+   if (stream_fd < 0)
+      croak("Handle has no system file descriptor (fileno)");
+#ifdef WIN32
+   {
+      HANDLE hFile = (HANDLE)_get_osfhandle(stream_fd);
+      if (hFile == INVALID_HANDLE_VALUE)
+         croak("Handle has no system file descriptor");
+      return sb_wait_win32handle_readable(aTHX_ hFile, timeout_sv);
+   }
+#else
+   {
+      fd_set rfds;
+      int r;
+      struct timeval tv, *tv_p= NULL;
+
+      FD_ZERO(&rfds);
+      FD_SET(stream_fd, &rfds);
+
+      if (timeout_sv && SvOK(timeout_sv)) {
+         NV timeout = SvNV(timeout_sv);
+         if (timeout < 0)
+            croak("timeout must be >= 0");
+
+         tv.tv_sec  = (long) timeout;
+         tv.tv_usec = (long) ((timeout - (NV) tv.tv_sec) * 1000000.0);
+         if (tv.tv_usec < 0)
+            tv.tv_usec = 0;
+         if (tv.tv_usec >= 1000000) {
+            tv.tv_sec += tv.tv_usec / 1000000;
+            tv.tv_usec %= 1000000;
+         }
+         tv_p= &tv;
+      }
+
+      r = select(stream_fd + 1, &rfds, NULL, NULL, NULL);
+      if (r < 0 && errno != EINTR)
+         croak_with_syserror("select failed", errno);
+      return (r > 0);
+   }
+#endif
+}
+
+bool sb_wait_fh_readable(pTHX_ PerlIO *stream, SV *timeout_sv) {
+   if (PerlIO_get_cnt(stream) > 0)
+      return true;
+   return sb_wait_fd_readable(aTHX_ PerlIO_fileno(stream), timeout_sv);
+}
+
 /* Approximate perl's sysread implementation (esp for Win32) on our secret buffer.
  * Also warn if Perl has buffered data for this handle.
  */
