@@ -1001,18 +1001,19 @@ new(pkg, ...)
          for (; i < items; i+= 2) {
             STRLEN len;
             const char *name= SvPV(ST(i), len);
+            SV *val= ST(i+1);
             if (len == 4 && memcmp(name, "echo", 4) == 0) {
-               set_echo= ST(i+1);
+               if (SvOK(val)) set_echo= val;
             }
             else if (len == 6 && memcmp(name, "handle", 6) == 0) {
-               IO *io = sv_2io(ST(i+1));
+               IO *io = sv_2io(val);
                handle= io? IoIFP(io) : NULL;
             }
             else if (len == 10 && memcmp(name, "line_input", 10) == 0) {
-               set_line_input= ST(i+1);
+               if (SvOK(val)) set_line_input= val;
             }
             else if (len == 12 && memcmp(name, "auto_restore", 12) == 0) {
-               auto_restore= ST(i+1);
+               if (SvOK(val)) auto_restore= val;
             }
             else {
                croak("Unknown option '%s'", name);
@@ -1031,7 +1032,7 @@ new(pkg, ...)
       }
       if (auto_restore)
          cstate.auto_restore= SvTRUE(auto_restore);
-      if (set_echo && SvOK(set_echo)) {
+      if (set_echo) {
          bool enable= SvTRUE(set_echo);
          if (sb_console_state_get_echo(&cstate) != enable) {
             already_set= false;
@@ -1039,7 +1040,7 @@ new(pkg, ...)
                croak("set echo = %d failed", (int)enable);
          }
       }
-      if (set_line_input && SvOK(set_line_input)) {
+      if (set_line_input) {
          bool enable= SvTRUE(set_line_input);
          if (sb_console_state_get_line_input(&cstate) != enable) {
             already_set= false;
@@ -1049,7 +1050,7 @@ new(pkg, ...)
       }
       /* if user called 'maybe_new' and echo state aready matches requested
          state, return undef. */
-      if (ix == 1 && already_set)
+      if (ix == 1 && (set_echo || set_line_input) && already_set)
          XSRETURN(1);
       /* new blessed ConsoleState object */
       ST(0)= objref= sv_2mortal(newRV_noinc(&PL_sv_yes));
