@@ -110,6 +110,8 @@ static void croak_with_syserror(const char *prefix, DWORD error_code) {
       croak("%s: %lu", prefix, error_code);
 }
 
+#include "perl_win32_excerpt.c"
+
 #else /* not WIN32 */
 
 static size_t get_page_size() {

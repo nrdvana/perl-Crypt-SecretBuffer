@@ -384,6 +384,8 @@ IV secret_buffer_append_sysread(secret_buffer *buf, PerlIO *stream, size_t count
           * Win32 gives this error to the reader instead of a 0 read. */
          if (GetLastError() == ERROR_BROKEN_PIPE)
             return 0;
+         /* Update 'errno' to match closest equivalent to GetLasstError() */
+         translate_to_errno();
          return -1;
       }
       secret_buffer_set_len(buf, buf->len + bytes_read);
@@ -419,8 +421,11 @@ IV secret_buffer_syswrite(secret_buffer *buf, PerlIO *stream, IV offset, IV coun
       DWORD wrote;
       if (hFile == INVALID_HANDLE_VALUE)
          croak("Handle has no system file descriptor");
-      if (!WriteFile(hFile, buf->data + offset, (DWORD)count, &wrote, NULL))
+      if (!WriteFile(hFile, buf->data + offset, (DWORD)count, &wrote, NULL)) {
+         /* Update 'errno' to match closest equivalent to GetLasstError() */
+         translate_to_errno();
          return -1;
+      }
       return wrote;
    }
 #else
