@@ -35,6 +35,43 @@ subtest 'append_sysread EOF' => sub {
    close $r;
 };
 
+use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC );
+subtest 'append sysread timeout' => sub {
+   my ($r, $w) = pipe_with_data('abc');
+   socketpair(my $crl_r, my $ctl_w, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
+      or die "socketpair: $!";
+   $ctl_w->autoflush(1);
+   $w->autoflush(1);
+
+   my $ppid= $$;
+   my $pid= fork or do {
+      # child proc.  Wait up to 10 seconds for message from main thread
+      # that the test is done, else kill parent prodcess.
+      my $rin= '';
+      vec($rin, fileno($crl_r), 1)= 1;
+      my $n= select(my $rout = $rin, undef, undef, 10);
+      if ($n <= 0) {
+         # timeout.  stop parent from hanging forever.
+         kill TERM => $ppid;
+      }
+      exit 0;
+   };
+   my $buf= Crypt::SecretBuffer->new;
+   # first read should return immediately
+   $buf->append_sysread($r, 10, .1);
+   is( $buf->length, 3, 'got first 3 chars from pipe' );
+   # second read should block, but then time out after .1 seconds.
+   # In case it doesn't, the child will kill us.
+   my $ret= $buf->append_sysread($r, 10, .1);
+   ok( $!{EINTR}, 'timed out (EINTR)' )
+      or note "errno=$!";
+   is( $ret, undef, 'returned undef' );
+   is( $buf->length, 3, 'buffer unchanged' );
+   # inform child that we can exit cleanly
+   $ctl_w->print("done");
+   waitpid($pid, 0);
+};
+
 subtest load_file => sub {
    my $content= "1234"x50;
    my $f= File::Temp->new;
