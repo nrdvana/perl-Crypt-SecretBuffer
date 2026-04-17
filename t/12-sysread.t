@@ -71,11 +71,11 @@ subtest 'wait_handle_readable' => sub {
 
    # Now test from a socket
    $buf->length(0);
-   ok( Crypt::SecretBuffer::Exports::_wait_fh_readable($sock_r, .1), 'socket readable' );
+   ok( _wait_fh_readable($sock_r, .1), 'socket readable' );
    $buf->append_sysread($sock_r, 10);
    is( $buf->length, 3, 'got first 3 chars from socket' );
    # second wait should time out after .1 seconds
-   ok( !Crypt::SecretBuffer::Exports::_wait_fh_readable($sock_r, .1), 'socket not readable yet' );
+   ok( !_wait_fh_readable($sock_r, .1), 'socket not readable yet' );
    # In case it doesn't, the child will kill us.
 
    # inform child that we can exit cleanly

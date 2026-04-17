@@ -143,6 +143,7 @@ use warnings;
 use Carp;
 use IO::Handle;
 use Scalar::Util ();
+use Time::HiRes;
 use Fcntl ();
 use parent qw( DynaLoader );
 use overload '""' => \&stringify,
@@ -659,81 +660,108 @@ your own.
 
 sub append_console_line {
    my $self= shift;
-   my ($input_fh, %options);
+   my %options;
+
    # First argument can be input_fh, or just straight key/value list.
    if (@_ && ref($_[0]) && (ref $_[0] eq 'GLOB' || ref($_[0])->can('getc'))) {
       croak "Expected even-length list of options" unless @_ & 1;
-      ($input_fh, %options)= @_;
+      %options= (input_fh => @_);
    } else {
       croak "Expected even-length list of options" if @_ & 1;
       %options= @_;
-      $input_fh= delete $options{input_fh};
    }
-   my ($prompt, $prompt_fh, $char_mask, $char_count, $char_max, $char_class, $timeout, $state)
-      = delete @options{qw( prompt prompt_fh char_mask char_count char_max char_class timeout state )};
+
+   # This routine can resume where it left off by keeping most variables in %state
+   my $state= delete $options{state} || {};
+
+   # If 'start_len' is set, it means the prompt was already started and this is a continuation.
+   # The prompt is only printed on the initial call, unless they set 're_prompt'.
+   my $print_prompt= defined $state->{start_len}? delete $state->{re_prompt} : defined $options{prompt};
+   $state->{start_len}= $self->length
+      unless defined $state->{start_len};
+
+   # copy new parameters into state hash
+   for (qw( input_fh prompt prompt_fh char_mask char_count char_max char_class )) {
+      $state->{$_}= delete $options{$_}
+         if exists $options{$_};
+   }
+   # local vars for convenience
+   my ($input_fh, $prompt_fh, $char_mask, $char_count, $char_max, $char_class, $start_len)
+      = @{$state}{qw( input_fh prompt_fh char_mask char_count char_max char_class start_len )};
+
+   # timeout is per-call
+   my $timeout= delete $options{timeout};
+
    warn "unknown option: ".join(', ', keys %options)
       if keys %options;
-   my ($print_prompt, $ttystate, $start_len)= (defined $prompt, undef, $self->length);
-   if ($state && defined $state->{start_len}) {
-      $ttystate=   $state->{ttystate};
-      $start_len=  $state->{start_len};
-      $input_fh=   $state->{input_fh}   unless defined $input_fh;
-      $prompt_fh=  $state->{prompt_fh}  unless defined $prompt_fh;
-      $char_mask=  $state->{char_mask}  unless defined $char_mask;
-      $char_count= $state->{char_count} unless defined $char_count;
-      $char_max=   $state->{char_max}   unless defined $char_max;
-      $char_class= $state->{char_class} unless defined $char_class;
-      $print_prompt= delete $state->{re_prompt};
-   }
-   my ($reading_from, $writing_to)= ('supplied handle', 'supplied handle');
+
+   # Resolve input file handle if not specified
    if (!defined $input_fh) {
-      # user is requesting a read from the controlling terminal
+      # undef is a request to read from the controlling terminal
       if ($^O eq 'MSWin32') {
          open $input_fh, '+<', 'CONIN$' or croak 'open(CONIN$): '.$!;
-         open $prompt_fh, '>', 'CONOUT$' or croak 'open(CONOUT$): '.$!
-            unless defined $prompt_fh;
-         $reading_from= 'CONIN$';
-         $writing_to= 'CONOUT$';
+         $state->{reading_from}= 'CONIN$';
+         unless (defined $state->{prompt_fh}) {
+            open $prompt_fh, '>', 'CONOUT$' or croak 'open(CONOUT$): '.$!;
+            $state->{prompt_fh}= $prompt_fh;
+            $state->{writing_to}= 'CONOUT$';
+         }
       } else {
          open $input_fh, '+<', '/dev/tty' or croak "open(/dev/tty): $!";
-         $prompt_fh= $input_fh unless defined $prompt_fh;
-         $reading_from= $writing_to= '/dev/tty';
-      }
-   }
-   if (!defined $prompt_fh && (defined $prompt || defined $char_mask)) {
-      # Determine default prompt_fh
-      # For terminals, if it was STDIN then the underlying descriptors or libc FILE handle
-      # are probably read-only, so open a new writeable handle.  Also MSWin32 only has one
-      # console, so do this even if it isn't currently set as STDIN.
-      my $fd= fileno($input_fh);
-      if (-t $input_fh && ((defined $fd && $fd == 0) || \*STDIN == $input_fh || $^O eq 'MSWin32')) {
-         if ($^O eq 'MSWin32') {
-            open $prompt_fh, '>', 'CONOUT$' or croak 'open(CONOUT$): '.$!;
-            $writing_to= 'CONOUT$';
-         } else {
-            open $prompt_fh, '+<', '/dev/tty' or croak "open(/dev/tty): $!";
-            $writing_to= '/dev/tty';
+         $state->{reading_from}= '/dev/tty';
+         unless (defined $state->{prompt_fh}) {
+            $state->{prompt_fh}= $state->{input_fh};
+            $state->{writing_to}= '/dev/tty';
          }
       }
-      # For sockets or tty, default to the same file descriptor as input_fh.
-      # If the descriptor is read-only, things will fail, and it's the caller's
-      # job to fix the bug.
-      elsif (-S $input_fh || -t $input_fh) {
-         $prompt_fh= $input_fh;
-         $writing_to= 'input handle';
-      }
-      # Suppress prompt unless the handle looks like a TTY or Socket.  e.g. input from file
-      # or pipe can't usefully be prompted.  It could be that the parent process created a
-      # return pipe on STDOUT and wants to see the prompt there, but it would be too bold to
-      # take a guess at that.  The caller can supply prompt_fh => \*STDOUT if they want to.
-      else {
-         $prompt= $char_mask= undef;
+      $state->{input_fh}= $input_fh;
+   } else {
+      $state->{reading_from} ||= 'supplied_handle';
+   }
+
+   # Resolve prompt file handle if required and not specified
+   if (defined $state->{prompt} || defined $char_mask) {
+      if (!defined $prompt_fh) {
+         # Determine default prompt_fh
+         # For terminals, if it was STDIN then the underlying descriptors or libc FILE handle
+         # are probably read-only, so open a new writeable handle.  Also MSWin32 only has one
+         # console, so do this even if it isn't currently set as STDIN.
+         my $fd= fileno($input_fh);
+         if (-t $input_fh && ((defined $fd && $fd == 0) || \*STDIN == $input_fh || $^O eq 'MSWin32')) {
+            if ($^O eq 'MSWin32') {
+               open $prompt_fh, '>', 'CONOUT$' or croak 'open(CONOUT$): '.$!;
+               $state->{writing_to}= 'CONOUT$';
+            } else {
+               open $prompt_fh, '+<', '/dev/tty' or croak "open(/dev/tty): $!";
+               $state->{writing_to}= '/dev/tty';
+            }
+            $state->{prompt_fh}= $prompt_fh;
+         }
+         # For sockets or tty, default to the same file descriptor as input_fh.
+         # If the descriptor is read-only, things will fail, and it's the caller's
+         # job to fix the bug.
+         elsif (-S $input_fh || -t $input_fh) {
+            $state->{prompt_fh}= $prompt_fh= $input_fh;
+            $state->{writing_to}= 'input handle';
+         }
+         # Suppress prompt unless the handle looks like a TTY or Socket.  e.g. input from file
+         # or pipe can't usefully be prompted.  It could be that the parent process created a
+         # return pipe on STDOUT and wants to see the prompt there, but it would be too bold to
+         # take a guess at that.  The caller can supply prompt_fh => \*STDOUT if they want to.
+         else {
+            delete @{$state}{qw( prompt char_mask )};
+         }
+      } else {
+         $state->{writing_to} ||= 'supplied_handle';
       }
    }
+
    # If the user wants control over the keypresses, need to disable line-editing mode.
    # ConsoleState obj with auto_restore restores the console state when it goes out of scope.
-   my $input_by_chars= defined $char_mask || defined $char_count || defined $char_class || defined $timeout;
-   $ttystate ||= Crypt::SecretBuffer::ConsoleState->maybe_new(handle => $input_fh);
+   my $input_by_chars= defined $char_mask  || defined $char_count
+                    || defined $char_class || defined $timeout;
+   $state->{ttystate} ||= Crypt::SecretBuffer::ConsoleState->maybe_new(handle => $input_fh);
+   my $ttystate= $state->{ttystate};
    if ($ttystate && $ttystate->echo) {
       $ttystate->auto_restore(1);
       $ttystate->echo(0);
@@ -745,23 +773,25 @@ sub append_console_line {
    # Write the initial prompt
    if ($print_prompt) {
       my $suffix= '';
-      if ($state && defined $state->{start_len} && defined $char_mask) {
-         my $n= $self->len - $state->{start_len};
+      if (defined $start_len && defined $char_mask) {
+         my $n= $self->len - $start_len;
          $suffix= $char_mask x $n;
       }
-      $prompt_fh->print($prompt . $suffix) && $prompt_fh->flush
-         or croak "Failed to write $writing_to: $!";
+      $prompt_fh->print($state->{prompt} . $suffix) && $prompt_fh->flush
+         or croak "Failed to write $state->{writing_to}: $!";
    }
    my $ret;
    if ($input_by_chars) {
       while (1) {
          if (defined $timeout) {
-            my $start_t= time;
+            my $start_t= Time::HiRes::time();
             if (Crypt::SecretBuffer::Exports::_wait_fh_readable($input_fh, $timeout)) {
                # deduct from timeout
-               $timeout -= time - $start_t;
+               $timeout -= Time::HiRes::time() - $start_t;
                $timeout= 0 if $timeout < 0;
             } else {
+               # use EINTR to signal a timeout was reached, same as if we'd used alarm()
+               $!= Errno::EINTR();
                $ret= undef;
                last;
             }
@@ -790,7 +820,7 @@ sub append_console_line {
                        .(" "  x length $char_mask)
                        .("\b" x length $char_mask))
                      && $prompt_fh->flush
-                        or croak "Failed to write $writing_to: $!";
+                        or croak "Failed to write $state->{writing_to}: $!";
                   }
                }
             }
@@ -811,7 +841,7 @@ sub append_console_line {
             # char added
             if (length $char_mask) {
                $prompt_fh->print($char_mask) && $prompt_fh->flush
-                  or croak "Failed to write $writing_to: $!";
+                  or croak "Failed to write $state->{writing_to}: $!";
             }
             # If reached the char_count, return success
             last if $char_count && $self->length - $start_len == $char_count;
@@ -827,25 +857,14 @@ sub append_console_line {
    }
    # timeout or system error (including EINTR and EAGAIN)
    if (!defined $ret) {
-      # save state, if requested
-      if ($state) {
-         $state->{input_fh}=   $input_fh;
-         $state->{prompt_fh}=  $prompt_fh;
-         $state->{char_mask}=  $char_mask;
-         $state->{char_count}= $char_count;
-         $state->{char_max}=   $char_max;
-         $state->{char_class}= $char_class;
-         $state->{ttystate}=   $ttystate;
-         $state->{start_len}=  $start_len;
-      }
       return undef;
    }
    # If we're responsible for the prompt, also echo the newline to the user so that the caller
    # doesn't need to figure out what to use for $prompt_fh.
    $prompt_fh->print("\n") && $prompt_fh->flush
-      if defined $prompt;
+      if defined $state->{prompt};
    # Not a temporary failuire.  Wipe the state.
-   %$state= () if $state;
+   %$state= ();
    return !$ret? 0
         : $char_count? $self->length - $start_len == $char_count
         : 1;

@@ -4,7 +4,7 @@ use Test2AndUtils;
 use Crypt::SecretBuffer qw( secret NONBLOCK );
 use IO::Handle;
 use File::Temp qw(tempfile);
-use Time::HiRes qw( sleep );
+use Time::HiRes qw( time sleep );
 
 # Test normal file handle reading
 subtest 'append_console_line with file' => sub {
@@ -116,35 +116,50 @@ subtest 'parent/child pipe communication' => sub {
    close($read_fh);
 };
 
+use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC );
 subtest 'timeout loop' => sub {
-   pipe(my $parent_r, my $child_w) or die "Cannot create pipe: $!";
+   pipe(my $input_r,  my $input_w)  or die "Cannot create pipe: $!";
    pipe(my $prompt_r, my $prompt_w) or die "Cannot create pipe: $!";
+   # Use socketpair for control because it is select()able on Win32
+   socketpair(my $crl_r, my $ctl_w, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
+      or die "socketpair: $!";
+   $_->autoflush(1) for $input_w, $ctl_w;
    
+   my $ppid= $$;
    my $pid = fork();
    die "Cannot fork: $!" unless defined $pid;
-   
    if ($pid == 0) {
-      # Child process
-      $parent_r->close;
-      $child_w->print("secret ");
-      $child_w->flush;
+      # Child process (or thread on Win32)
+      $prompt_w->close unless $^O eq 'MSWin32'; # win32 shares handle with parent thread
+      $input_w->print("secret ");
       sleep 1;
-      $child_w->print("from child process\n");
-      exit(0);
+      $input_w->print("from child process\n");
+      # Wait up to 10 seconds for message from main thread
+      # that the test is done, else kill parent prodcess.
+      my $rin= '';
+      vec($rin, fileno($crl_r), 1)= 1;
+      my $n= select(my $rout = $rin, undef, undef, 10);
+      if ($n <= 0) {
+         # timeout.  stop parent from hanging forever.
+         kill TERM => $ppid;
+      }
+      exit 0;
    }
-   
+
    # Parent process
-   $child_w->close;
    my $buf = Crypt::SecretBuffer->new();
    my $timeouts= 0;
    my $result;
    my %state;
    while (1) {
+      my $start_t= time;
       $result = $buf->append_console_line(
-         input_fh => $parent_r, prompt_fh => $prompt_w,
+         input_fh => $input_r, prompt_fh => $prompt_w,
          prompt => 'password: ',
          timeout => .2, state => \%state
       );
+      note sprintf("append_console_line = %s, errno = %s, chars = %d, elapsed %.3f",
+         (defined $result? $result : '<undef>'), $!, $buf->length, (time - $start_t));
       last if defined $result or !$!{EINTR};
       ++$timeouts;
    }
@@ -158,9 +173,10 @@ subtest 'timeout loop' => sub {
    $buf->{stringify_mask} = undef;
    is("$buf", 'secret from child process', 'content from child process is correct');
 
-   kill -TERM => $pid;
+   # inform child that we can exit cleanly
+   $ctl_w->print("done\n");
    waitpid($pid, 0);
-   close($parent_r);
+   is( $?, 0, 'child exited cleanly' );
 };
 
 # Main test block for TTY functionality
