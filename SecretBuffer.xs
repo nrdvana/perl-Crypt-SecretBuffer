@@ -549,6 +549,8 @@ void
 length(buf, val=NULL)
    auto_secret_buffer buf
    SV *val
+   ALIAS:
+      len = 1
    PPCODE:
       if (val) { /* writing */
          IV ival= SvIV(val);
