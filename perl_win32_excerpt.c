@@ -1,4 +1,8 @@
-/* This is copied verbatim from perl's win32/win32.c
+/* This is copied verbatim from perl's win32/win32.c and covered under the
+ * copyright of Perl, rather than that of this distribution.
+ * I think this is OK since this dist is specifically licensed under the same
+ * terms as perl itself.
+ *
  * It is perl's internal implementation of converting from Win32 error codes
  * to libC standard 'errno' codes, so that perl scripts see the correct '$!'
  * after a failed call that was based on a Win32 API call.

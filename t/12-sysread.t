@@ -3,7 +3,7 @@ use lib "$FindBin::Bin/lib";
 use Test2AndUtils;
 use IO::Handle;
 use File::Temp;
-use Crypt::SecretBuffer qw(NONBLOCK);
+use Crypt::SecretBuffer qw( NONBLOCK _wait_fh_readable );
 
 sub check_content {
    my ($buf, $expected, $msg) = @_;
@@ -36,12 +36,16 @@ subtest 'append_sysread EOF' => sub {
 };
 
 use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC );
-subtest 'append sysread timeout' => sub {
+subtest 'wait_handle_readable' => sub {
    my ($r, $w) = pipe_with_data('abc');
+   socketpair(my $sock_r, my $sock_w, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
+      or die "socketpair: $!";
    socketpair(my $crl_r, my $ctl_w, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
       or die "socketpair: $!";
+   $sock_w->autoflush(1);
    $ctl_w->autoflush(1);
    $w->autoflush(1);
+   $sock_w->print('xyz');
 
    my $ppid= $$;
    my $pid= fork or do {
@@ -57,19 +61,27 @@ subtest 'append sysread timeout' => sub {
       exit 0;
    };
    my $buf= Crypt::SecretBuffer->new;
-   # first read should return immediately
-   $buf->append_sysread($r, 10, .1);
+   # first wait should return immediately
+   ok( _wait_fh_readable($r, .1), 'pipe readable' );
+   $buf->append_sysread($r, 10);
    is( $buf->length, 3, 'got first 3 chars from pipe' );
-   # second read should block, but then time out after .1 seconds.
+   # second wait should time out after .1 seconds
+   ok( !_wait_fh_readable($r, .1), 'pipe not readable yet' );
    # In case it doesn't, the child will kill us.
-   my $ret= $buf->append_sysread($r, 10, .1);
-   ok( $!{EINTR}, 'timed out (EINTR)' )
-      or note "errno=$!";
-   is( $ret, undef, 'returned undef' );
-   is( $buf->length, 3, 'buffer unchanged' );
+
+   # Now test from a socket
+   $buf->length(0);
+   ok( Crypt::SecretBuffer::Exports::_wait_fh_readable($sock_r, .1), 'socket readable' );
+   $buf->append_sysread($sock_r, 10);
+   is( $buf->length, 3, 'got first 3 chars from socket' );
+   # second wait should time out after .1 seconds
+   ok( !Crypt::SecretBuffer::Exports::_wait_fh_readable($sock_r, .1), 'socket not readable yet' );
+   # In case it doesn't, the child will kill us.
+
    # inform child that we can exit cleanly
    $ctl_w->print("done");
    waitpid($pid, 0);
+   is( $?, 0, 'child exited cleanly' );
 };
 
 subtest load_file => sub {

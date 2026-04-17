@@ -293,6 +293,7 @@ for particularly large buffers, though.  Patches welcome.
       secret_buffer secret span unmask_secrets_to memcmp
       NONBLOCK AT_LEAST ISO8859_1 ASCII UTF8 UTF16LE UTF16BE HEX BASE64
       MATCH_MULTI MATCH_REVERSE MATCH_NEGATE MATCH_ANCHORED MATCH_CONST_TIME
+      _wait_fh_readable
    );
 }
 
@@ -754,7 +755,18 @@ sub append_console_line {
    my $ret;
    if ($input_by_chars) {
       while (1) {
-         $ret= $self->append_read($input_fh, 1, $timeout)
+         if (defined $timeout) {
+            my $start_t= time;
+            if (Crypt::SecretBuffer::Exports::_wait_fh_readable($input_fh, $timeout)) {
+               # deduct from timeout
+               $timeout -= time - $start_t;
+               $timeout= 0 if $timeout < 0;
+            } else {
+               $ret= undef;
+               last;
+            }
+         }
+         $ret= $self->append_read($input_fh, 1)
             or last;
          # Handle control characters
          my $end_pos= $self->length - 1;
@@ -842,32 +854,20 @@ sub append_console_line {
 =method append_sysread
 
   $byte_count= $buf->append_sysread($fh, $count);
-  $byte_count= $buf->append_sysread($fh, $count, $timeout);
 
 This performs a low-level read from the file handle and appends the bytes to the buffer.
 It must be a real file handle with an underlying file descriptor number (C<fileno>).
 Like C<sysread>, on error it returns C<undef> and on success it returns the count added.
 This ignores Perl I/O layers.
 
-The C<$timeout> allows you to avoid blocking indefinitely.  This is based on polling for
-readability of the file handle (using C<select> on Unix and C<WaitForSingleObject> on Win32).
-Also, on Win32 when the file handle is a Console, this will discard any non-character input
-events.  The function may return early (before the full timeout) and still not have read
-anything.  You should treat the timeout as protection from excessive blocking, not a timing
-mechanism.
-
 =method append_read
 
   $byte_count= $buf->append_read($fh, $count);
-  $byte_count= $buf->append_read($fh, $count, $timeout);
 
 This is a relaxed version of C<append_sysread> that when possible, reads directly from the OS
 to avoid buffering the secret in libc or Perl, but reads from the Perl buffer if you already
 have input data in one of those buffers, or if the file handle is a virtual Perl handle not
 backed by the OS.
-
-The timeout is passed along to C<append_sysread> for real file handles, and not applicable to
-virtual Perl file handles. (might be nice; not sure how to implement that reliably cross-platform)
 
 =method syswrite
 

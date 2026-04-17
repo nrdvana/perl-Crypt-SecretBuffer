@@ -43,9 +43,6 @@ typedef secret_buffer_span *auto_secret_buffer_span;
 
 int sb_parse_codepointcmp(secret_buffer_parse *lhs, secret_buffer_parse *rhs);
 
-bool sb_wait_fd_readable(pTHX_ int stream_fd, SV *timeout);
-bool sb_wait_fh_readable(pTHX_ PerlIO *stream, SV *timeout);
-
 /**********************************************************************************************\
 * XS Utils
 \**********************************************************************************************/
@@ -154,6 +151,9 @@ static void* memmem(
    return NULL;
 }
 #endif /* HAVE_MEMMEM */
+
+/* static functions sb_wait_fh_readable and sb_wait_fd_readable */
+#include "secret_buffer_wait_readable.c"
 
 /**********************************************************************************************\
 * MAGIC vtables
@@ -799,45 +799,32 @@ append_random(buf, count, flags=0)
       RETVAL
 
 void
-append_sysread(buf, handle, count, timeout_sv= NULL)
+append_sysread(buf, handle, count)
    auto_secret_buffer buf
    PerlIO *handle
    IV count
-   SV *timeout_sv
    INIT:
       IV got;
    PPCODE:
-      if (timeout_sv && SvOK(timeout_sv)) {
-         if (!sb_wait_fd_readable(aTHX_ PerlIO_fileno(handle), timeout_sv)) {
-            errno = EINTR;
-            XSRETURN_UNDEF;
-         }
-      }
       got= secret_buffer_append_sysread(buf, handle, count);
-      if (got < 0) {
+      if (got < 0)
          XSRETURN_UNDEF;
-      } else {
+      else
          PUSHs(sv_2mortal(newSViv(got)));
-      }
 
 void
-append_read(buf, handle, count, timeout_sv= NULL)
+append_read(buf, handle, count)
    auto_secret_buffer buf
    PerlIO *handle
    IV count
-   SV *timeout_sv
    INIT:
       int got;
    PPCODE:
-      if (timeout_sv && SvOK(timeout_sv)) {
-         if (!sb_wait_fh_readable(aTHX_ handle, timeout_sv)) {
-            errno = EINTR;
-            XSRETURN_UNDEF;
-         }
-      }
       got= secret_buffer_append_read(buf, handle, count);
-      ST(0)= (got < 0)? &PL_sv_undef : sv_2mortal(newSViv(got));
-      XSRETURN(1);
+      if (got < 0)
+         XSRETURN_UNDEF;
+      else
+         PUSHs(sv_2mortal(newSViv(got)));
 
 void
 _append_console_line(buf, handle)
@@ -953,6 +940,15 @@ unmask_secrets_to(coderef, ...)
       count= call_sv(coderef, GIMME_V);
       SPAGAIN;
       XSRETURN(count);
+
+bool
+_wait_fh_readable(handle, timeout_sv)
+   PerlIO *handle
+   SV *timeout_sv
+   CODE:
+      RETVAL= sb_wait_fh_readable(aTHX_ handle, timeout_sv);
+   OUTPUT:
+      RETVAL
 
 void
 _debug_charset(cset)
