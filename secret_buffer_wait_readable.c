@@ -15,6 +15,25 @@
  * I'm ignoring serial ports for now since I don't have an easy way to test.
  */
 
+static struct timeval* sb_timeout_sv_to_timeval(pTHX_ SV *timeout_sv, struct timeval *tv_out) {
+   if (timeout_sv && SvOK(timeout_sv)) {
+      NV timeout = SvNV(timeout_sv);
+      if (timeout < 0)
+         croak("timeout must be >= 0");
+
+      tv_out->tv_sec  = (long) timeout;
+      tv_out->tv_usec = (long) ((timeout - (NV) tv_out->tv_sec) * 1000000.0);
+      if (tv_out->tv_usec < 0)
+         tv_out->tv_usec = 0;
+      if (tv_out->tv_usec >= 1000000) {
+         tv_out->tv_sec += tv_out->tv_usec / 1000000;
+         tv_out->tv_usec %= 1000000;
+      }
+      return tv_out;
+   }
+   return NULL;
+}
+
 #ifdef WIN32
 
 static DWORD sb_win32_timeout_sv_to_ms(pTHX_ SV *timeout_sv) {
@@ -118,8 +137,7 @@ static bool sb_wait_win32_pipe_readable(HANDLE hdl, DWORD wait_ms) {
           */
          if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED)
             return true;
-
-         return false;
+         croak_with_syserror("PeekNamedPipe failed", err);
       }
 
       if (avail > 0)
@@ -143,10 +161,10 @@ static bool sb_wait_win32_pipe_readable(HANDLE hdl, DWORD wait_ms) {
    }
 }
 
-/* Given a Win32 HANDLE (e.g. not a SOCKET) dispatch to the function that can wait for
+/* Given a Win32 HANDLE, dispatch to the function that can wait for
  * readability for that type of handle.
  */
-bool sb_wait_win32_handle_readable(pTHX_ HANDLE hdl, DWORD wait_ms) {
+bool sb_wait_win32_handle_readable(pTHX_ HANDLE hdl, SV *timeout_sv) {
    DWORD ftype;
 
    SetLastError(0);
@@ -168,56 +186,53 @@ bool sb_wait_win32_handle_readable(pTHX_ HANDLE hdl, DWORD wait_ms) {
          croak("timeout is not supported on this type of Win32 character handle");
       }
 
-      return sb_wait_win32_console_readable(hdl, wait_ms);
+      return sb_wait_win32_console_readable(hdl, sb_win32_timeout_sv_to_ms(aTHX_ timeout_sv));
    }
 
-   case FILE_TYPE_PIPE:
-      return sb_wait_win32_pipe_readable(hdl, wait_ms);
-
+   case FILE_TYPE_PIPE: {
+      DWORD avail= 0;
+      /* both named pipes and winsock SOCKETs are reported as TYPE_PIPE */
+      if (PeekNamedPipe(hdl, NULL, 0, NULL, &avail, NULL)) {
+         if (avail > 0)
+            return true;
+         return sb_wait_win32_pipe_readable(hdl, sb_win32_timeout_sv_to_ms(aTHX_ timeout_sv));
+      }
+      else if (GetLastError() != ERROR_INVALID_FUNCTION)
+         croak_with_syserror("PeekNamedPipe failed", GetLastError());
+      /* else fall through because it wasn't really a pipe */
+   }
    default:
       croak("timeout is not supported on this type of Win32 handle");
    }
 }
 #endif
 
-static bool sb_wait_fd_readable(pTHX_ int stream_fd, SV *timeout_sv) {
-   Stat_t st;
-   if (stream_fd < 0)
-      croak("Handle has no system file descriptor (fileno)");
+static bool sb_wait_fd_readable(pTHX_ int fd, SV *timeout_sv) {
 #ifdef WIN32
-   if (!(fstat(stream_fd, &st) == 0 && S_ISSOCK(st.st_mode))) {
-      HANDLE hFile = (HANDLE)_get_osfhandle(stream_fd);
+   /* Win32 getsockopt() and select() use SOCKET pointers, but Perl has defined
+    * macros so that we use the regular POSIX style API, and can share code below.
+    */
+   int val, len = sizeof(val);
+   int save_errno= errno;
+   int ret= getsockopt(fd, SOL_SOCKET, SO_TYPE, (char*)&val, &len);
+   errno= save_errno;
+   if (ret < 0) {
+      /* Not a socket, so need to use something other than 'select' */
+      HANDLE hFile = (HANDLE)_get_osfhandle(fd);
       if (hFile == INVALID_HANDLE_VALUE)
          croak("Handle has no system file descriptor");
-      return sb_wait_win32_handle_readable(aTHX_ hFile, sb_win32_timeout_sv_to_ms(aTHX_ timeout_sv));
+      return sb_wait_win32_handle_readable(aTHX_ hFile, timeout_sv);
    } else
-   /* Win32 sockets use the same path as POSIX */
 #endif
    {
       fd_set rfds;
       int r;
-      struct timeval tv, *tv_p= NULL;
+      struct timeval tv;
 
       FD_ZERO(&rfds);
-      FD_SET(stream_fd, &rfds);
+      FD_SET(fd, &rfds);
 
-      if (timeout_sv && SvOK(timeout_sv)) {
-         NV timeout = SvNV(timeout_sv);
-         if (timeout < 0)
-            croak("timeout must be >= 0");
-
-         tv.tv_sec  = (long) timeout;
-         tv.tv_usec = (long) ((timeout - (NV) tv.tv_sec) * 1000000.0);
-         if (tv.tv_usec < 0)
-            tv.tv_usec = 0;
-         if (tv.tv_usec >= 1000000) {
-            tv.tv_sec += tv.tv_usec / 1000000;
-            tv.tv_usec %= 1000000;
-         }
-         tv_p= &tv;
-      }
-
-      r = select(stream_fd + 1, &rfds, NULL, NULL, tv_p);
+      r = select(fd + 1, &rfds, NULL, NULL, sb_timeout_sv_to_timeval(aTHX_ timeout_sv, &tv));
       if (r < 0 && errno != EINTR)
          croak_with_syserror("select failed", errno);
       return (r > 0);
@@ -225,7 +240,10 @@ static bool sb_wait_fd_readable(pTHX_ int stream_fd, SV *timeout_sv) {
 }
 
 static bool sb_wait_fh_readable(pTHX_ PerlIO *fh, SV *timeout_sv) {
+   int fd;
    if (PerlIO_get_cnt(fh) > 0)
       return true;
-   return sb_wait_fd_readable(aTHX_ PerlIO_fileno(fh), timeout_sv);
+   if ((fd= PerlIO_fileno(fh)) < 0)
+      croak("Handle has no system file descriptor (fileno)");
+   return sb_wait_fd_readable(aTHX_ fd, timeout_sv);
 }

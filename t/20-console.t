@@ -118,41 +118,43 @@ subtest 'parent/child pipe communication' => sub {
 
 use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC );
 subtest 'timeout loop' => sub {
-   pipe(my $input_r,  my $input_w)  or die "Cannot create pipe: $!";
-   pipe(my $prompt_r, my $prompt_w) or die "Cannot create pipe: $!";
+   pipe(my $input_r,  my $input_w) or die "Cannot create pipe: $!";
    # Use socketpair for control because it is select()able on Win32
-   socketpair(my $crl_r, my $ctl_w, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
+   socketpair(my $parent, my $child, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
       or die "socketpair: $!";
-   $_->autoflush(1) for $input_w, $ctl_w;
+   $_->autoflush(1) for $input_w, $parent, $child;
    
    my $ppid= $$;
    my $pid = fork();
    die "Cannot fork: $!" unless defined $pid;
    if ($pid == 0) {
       # Child process (or thread on Win32)
-      $prompt_w->close unless $^O eq 'MSWin32'; # win32 shares handle with parent thread
       $input_w->print("secret ");
       sleep 1;
       $input_w->print("from child process\n");
       # Wait up to 10 seconds for message from main thread
-      # that the test is done, else kill parent prodcess.
-      my $rin= '';
-      vec($rin, fileno($crl_r), 1)= 1;
-      my $n= select(my $rout = $rin, undef, undef, 10);
+      # that the test is done, else kill parent process.
+      my $rfd= '';
+      vec($rfd, fileno($child), 1)= 1;
+      my $n= select($rfd, undef, undef, 10);
       if ($n <= 0) {
          # timeout.  stop parent from hanging forever.
+         note "child killing parent";
          kill TERM => $ppid;
       }
+      note "child exits cleanly";
       exit 0;
    }
 
    # Parent process
+   pipe(my $prompt_r, my $prompt_w) or die "Cannot create pipe: $!";
    my $buf = Crypt::SecretBuffer->new();
    my $timeouts= 0;
    my $result;
    my %state;
    while (1) {
       my $start_t= time;
+      $!= 0;
       $result = $buf->append_console_line(
          input_fh => $input_r, prompt_fh => $prompt_w,
          prompt => 'password: ',
@@ -168,14 +170,17 @@ subtest 'timeout loop' => sub {
    ok($timeouts > 0, 'more than one timeout');
    is($buf->length, 25, 'buffer contains correct number of characters from child process');
    $prompt_w->close;
-   is( do { local $/= undef; scalar <$prompt_r>; }, "password: \n", 'prompt got written once' );
-   
+   my $prompt_buf= do { local $/; <$prompt_r> };
+   is( $prompt_buf, "password: \n", 'prompt got written once' );
+
    $buf->{stringify_mask} = undef;
    is("$buf", 'secret from child process', 'content from child process is correct');
 
    # inform child that we can exit cleanly
-   $ctl_w->print("done\n");
-   waitpid($pid, 0);
+   note "send done";
+   send($parent, "done", 0);
+   note "waitpid...\n";
+   waitpid($pid, 0) or die "waitpid: $!";
    is( $?, 0, 'child exited cleanly' );
 };
 

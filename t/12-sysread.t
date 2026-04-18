@@ -38,22 +38,19 @@ subtest 'append_sysread EOF' => sub {
 use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC );
 subtest 'wait_handle_readable' => sub {
    my ($r, $w) = pipe_with_data('abc');
-   socketpair(my $sock_r, my $sock_w, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
+   socketpair(my $p_sock, my $c_sock, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
       or die "socketpair: $!";
-   socketpair(my $crl_r, my $ctl_w, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
-      or die "socketpair: $!";
-   $sock_w->autoflush(1);
-   $ctl_w->autoflush(1);
-   $w->autoflush(1);
-   $sock_w->print('xyz');
+   $_->autoflush(1) for $w, $p_sock, $c_sock;
 
    my $ppid= $$;
    my $pid= fork or do {
-      # child proc.  Wait up to 10 seconds for message from main thread
+      # child proc.
+      send($c_sock, "xyz", 0);
+      # Wait up to 10 seconds for message from main thread
       # that the test is done, else kill parent prodcess.
       my $rin= '';
-      vec($rin, fileno($crl_r), 1)= 1;
-      my $n= select(my $rout = $rin, undef, undef, 10);
+      vec($rin, fileno($c_sock), 1)= 1;
+      my $n= select($rin, undef, undef, 10);
       if ($n <= 0) {
          # timeout.  stop parent from hanging forever.
          kill TERM => $ppid;
@@ -71,15 +68,15 @@ subtest 'wait_handle_readable' => sub {
 
    # Now test from a socket
    $buf->length(0);
-   ok( _wait_fh_readable($sock_r, .1), 'socket readable' );
-   $buf->append_sysread($sock_r, 10);
+   ok( _wait_fh_readable($p_sock, 5), 'socket readable' );
+   $buf->append_sysread($p_sock, 10);
    is( $buf->length, 3, 'got first 3 chars from socket' );
    # second wait should time out after .1 seconds
-   ok( !_wait_fh_readable($sock_r, .1), 'socket not readable yet' );
+   ok( !_wait_fh_readable($p_sock, .1), 'socket not readable yet' );
    # In case it doesn't, the child will kill us.
 
    # inform child that we can exit cleanly
-   $ctl_w->print("done");
+   send($p_sock, "done", 0);
    waitpid($pid, 0);
    is( $?, 0, 'child exited cleanly' );
 };

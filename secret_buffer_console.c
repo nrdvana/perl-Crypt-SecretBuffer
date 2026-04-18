@@ -229,7 +229,7 @@ static void sb_console_state_destroy(pTHX_ sb_console_state *state) {
 
 static bool
 sb_console_state_wait_char_readable(pTHX_ sb_console_state *state, SV *timeout_sv) {
-   return sb_wait_win32_handle_readable(aTHX_ state->hdl, sb_win32_timeout_sv_to_ms(aTHX_ timeout_sv));
+   return sb_wait_win32_handle_readable(aTHX_ state->hdl, timeout_sv);
 }
 
 #else /* not WIN32 */
