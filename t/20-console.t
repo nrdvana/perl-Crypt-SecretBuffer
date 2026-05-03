@@ -116,6 +116,31 @@ subtest 'parent/child pipe communication' => sub {
    close($read_fh);
 };
 
+subtest unicode => sub {
+   my ($read_fh, $write_fh)= pipe_with_data();
+
+   my $pid = fork();
+   die "Cannot fork: $!" unless defined $pid;
+
+   if ($pid == 0) {
+      # Child process
+      binmode($write_fh, ':encoding(utf-8)');
+      print $write_fh "unicode \x{100} \x{1000}\n";
+      exit(0);
+   }
+
+   # Parent process
+   my $buf = Crypt::SecretBuffer->new();
+   my $result = $buf->append_console_line($read_fh, utf8 => 1);
+
+   is($result, T, 'append_console_line returns true when reading from child process pipe');
+   note 'contents: "'.$buf->unmask_to(\&escape_nonprintable).'"';
+   is($buf->span(encoding => 'UTF-8')->cmp("unicode \x{100} \x{1000}"), 0,
+      'buffer contains correct utf8 data from child process');
+   waitpid($pid, 0);
+   close($read_fh);
+};
+
 use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC );
 subtest 'timeout loop' => sub {
    pipe(my $input_r,  my $input_w) or die "Cannot create pipe: $!";

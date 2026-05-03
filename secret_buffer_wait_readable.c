@@ -84,7 +84,7 @@ sb_wait_win32_console_readable(HANDLE hdl, DWORD wait_ms) {
        * character-producing key event. Discard non-character events so we
        * don't wake forever on the same unread record.
        */
-      if (PeekConsoleInput(hdl, in_rec, sizeof(in_rec)/sizeof(*in_rec), &nread)) {
+      if (PeekConsoleInputW(hdl, in_rec, sizeof(in_rec)/sizeof(*in_rec), &nread)) {
          for (i = 0; i < nread; i++) {
             if (in_rec[i].EventType == KEY_EVENT
                 && in_rec[i].Event.KeyEvent.bKeyDown
@@ -97,7 +97,7 @@ sb_wait_win32_console_readable(HANDLE hdl, DWORD wait_ms) {
          /* discard the non-char events */
          if (i > 0) {
             DWORD nread2;
-            if (!ReadConsoleInput(hdl, in_rec, i, &nread2))
+            if (!ReadConsoleInputW(hdl, in_rec, i, &nread2))
                croak_with_syserror("ReadConsoleInput failed", GetLastError());
             secret_buffer_wipe((char*) in_rec, sizeof(in_rec));
          }

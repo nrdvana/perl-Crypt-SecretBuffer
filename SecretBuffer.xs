@@ -248,11 +248,11 @@ void* secret_buffer_X_from_magic(pTHX_ SV *obj, int flags,
 static secret_buffer_span* secret_buffer_span_from_magic(SV *objref, int flags);
 
 #include "secret_buffer_base.c"
-#include "secret_buffer_console.c"
-#include "secret_buffer_async_write.c"
 #include "secret_buffer_charset.c"
 #include "secret_buffer_parse.c"
 #include "secret_buffer_span.c"
+#include "secret_buffer_console.c"
+#include "secret_buffer_async_write.c"
 
 /**********************************************************************************************\
 * SecretBuffer magic
@@ -1107,6 +1107,19 @@ wait_char_readable(cstate, timeout_sv=&PL_sv_undef)
    SV *timeout_sv
    CODE:
       RETVAL= sb_console_state_wait_char_readable(aTHX_ cstate, timeout_sv);
+   OUTPUT:
+      RETVAL
+
+bool
+_append_console_char(cstate, buf)
+   sb_console_state *cstate
+   secret_buffer *buf;
+   CODE:
+#ifdef WIN32
+      RETVAL= sb_append_console_char(aTHX_ cstate, buf);
+#else
+      RETVAL= false;
+#endif
    OUTPUT:
       RETVAL
 

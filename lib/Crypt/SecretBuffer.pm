@@ -596,6 +596,12 @@ cases is true then the default is to suppress all prompting.  These defaults sho
 to pass C<< input_fh => \*STDIN >> for the behavior of simply allowing the password to be piped
 into the command when it isn't a terminal without having to test those conditions yourself.
 
+=item utf8
+
+Read unicode characters into the buffer as UTF-8 byte sequences.  If the input contains a
+malformed or invalid character, croak.  This option implies a default C<char_class> of
+C<< qr/[\p{Print}]/ >>. (i.e. by default only printable characters can be added to the password)
+
 =item char_mask
 
 Display this static string every time the user types a key, for feedback.  A common choice would
@@ -682,13 +688,17 @@ sub append_console_line {
       unless defined $state->{start_len};
 
    # copy new parameters into state hash
-   for (qw( input_fh prompt prompt_fh char_mask char_count char_max char_class )) {
+   for (qw( input_fh prompt prompt_fh char_mask char_count char_max char_class utf8 )) {
       $state->{$_}= delete $options{$_}
          if exists $options{$_};
    }
+   # the default char_class for utf8 is the set of valid printable characters
+   $state->{char_class} ||= qr/[\p{Print}]/
+      if $state->{utf8};
+
    # local vars for convenience
-   my ($input_fh, $prompt_fh, $char_mask, $char_count, $char_max, $char_class, $start_len)
-      = @{$state}{qw( input_fh prompt_fh char_mask char_count char_max char_class start_len )};
+   my ($input_fh, $prompt_fh, $char_mask, $char_count, $char_max, $char_class, $start_len, $utf8)
+      = @{$state}{qw( input_fh prompt_fh char_mask char_count char_max char_class start_len utf8)};
 
    # timeout is per-call
    my $timeout= delete $options{timeout};
@@ -760,7 +770,8 @@ sub append_console_line {
    # If the user wants control over the keypresses, need to disable line-editing mode.
    # ConsoleState obj with auto_restore restores the console state when it goes out of scope.
    my $input_by_chars= defined $char_mask  || defined $char_count
-                    || defined $char_class || defined $timeout;
+                    || defined $char_class || defined $timeout
+                    || $utf8;
    $state->{ttystate} ||= Crypt::SecretBuffer::ConsoleState->maybe_new(handle => $input_fh);
    my $ttystate= $state->{ttystate};
    if ($ttystate && $ttystate->echo) {
@@ -776,6 +787,11 @@ sub append_console_line {
       my $suffix= '';
       if (defined $start_len && defined $char_mask) {
          my $n= $self->len - $start_len;
+         if ($n && $utf8) {
+            $n= 0;
+            my $span= $self->span(pos => $start_len, encoding => 'UTF-8');
+            ++$n while $span->len && eval { $span->ltrim(qr/./) };
+         }
          $suffix= $char_mask x $n;
       }
       $prompt_fh->print($state->{prompt} . $suffix) && $prompt_fh->flush
@@ -783,7 +799,7 @@ sub append_console_line {
    }
    my $ret;
    if ($input_by_chars) {
-      while (1) {
+      read_loop: while (1) {
          if (defined $timeout) {
             my $start_t= Time::HiRes::time();
             if (Crypt::SecretBuffer::Exports::_wait_fh_readable($input_fh, $timeout)) {
@@ -797,10 +813,26 @@ sub append_console_line {
                last;
             }
          }
-         $ret= $self->append_read($input_fh, 1)
-            or last;
-         # Handle control characters
+         # Windows Console events can deliver UTF-16 characters which we can transcode to UTF-8
+         if ($utf8 && $ttystate && $^O eq 'MSWin32') {
+            $ret= eval { $ttystate->_append_console_char($self) };
+            unless (defined $ret) {
+               # Errors about invalid surrogate pairs probably need seen by the user
+               # because their unicode input is not reaching the buffer reliably.
+               if ($@ =~ /surrogate/) {
+                  my $msg= "\nWarning: $@.  Your console settings are probably wrong.\n";
+                  $prompt_fh? $prompt_fh->print($msg) : warn $msg;
+               }
+               $ret= undef;
+               last;
+            }
+            next unless $ret; # false means no complete character yet, try again
+         } else {
+            $ret= $self->append_read($input_fh, 1)
+               or last; # EOF or system error
+         }
          my $end_pos= $self->length - 1;
+         # Handle control characters
          if ($self->index(qr/[\0-\x1F\x7F]/, $end_pos) == $end_pos) {
             # If it is \r or \n, end.  If char_count was requested, and we didn't
             # end by that logic, then we don't have the requested char count, so
@@ -830,22 +862,63 @@ sub append_console_line {
                $self->length($end_pos);
             }
          }
-         elsif ($char_class && $self->index($char_class, $end_pos) == -1) {
-            # not part of the permitted char class
-            $self->length($end_pos);
-         }
-         elsif ($char_max && $self->length - $start_len > $char_max) {
-            # refuse to add more characters
-            $self->length($end_pos);
-         }
-         else {
-            # char added
+         elsif ($utf8) {
+            # count chars, and also find out if there are invalid or incomplete characters
+            my $span= $self->span(pos => ($start_len || 0), encoding => 'UTF-8');
+            my $count= 0;
+            while ($span->len) {
+               my $ch= eval { $span->parse($char_class) };
+               unless ($ch) {
+                  if (!defined $ch) {
+                     # partial character? loop again until we get all of it.
+                     $span->encoding(0);
+                     my $ch_len= $span->starts_with(qr/[\xC0-\xDF]/)? 2
+                               : $span->starts_with(qr/[\xE0-\xEF]/)? 3
+                               : 4;
+                     next read_loop if $span->len < $ch_len;
+                     # else it's an invalid UTF-8 sequence.  Hard to say what the right thing to
+                     # do is here, but since passwords need to be an exact match, lets delete
+                     # the invalid chars and emit a warning that hopefully the user can see.
+                     my $msg= "\nWarning: discarding invalid UTF-8 sequence.  Your console settings are probably wrong.\n";
+                     $prompt_fh? $prompt_fh->print($msg) : warn $msg;
+                  }
+                  # else just not a permitted character. Truncate / ignore it.
+                  $self->length($span->pos);
+                  last;
+               }
+               if ($char_max && $count >= $char_max) {
+                  # truncate at max chars
+                  $self->length($ch->pos);
+                  last;
+               }
+               ++$count;
+            }
+            # char added successfully; show progress
             if (length $char_mask) {
                $prompt_fh->print($char_mask) && $prompt_fh->flush
                   or croak "Failed to write $state->{writing_to}: $!";
             }
             # If reached the char_count, return success
-            last if $char_count && $self->length - $start_len == $char_count;
+            last if $char_count && $count == $char_count;
+         }
+         else {
+            if ($char_class && $self->index($char_class, $end_pos) == -1) {
+               # not part of the permitted char class
+               $self->length($end_pos);
+            }
+            elsif ($char_max && $self->length - $start_len > $char_max) {
+               # refuse to add more characters
+               $self->length($end_pos);
+            }
+            else {
+               # char added
+               if (length $char_mask) {
+                  $prompt_fh->print($char_mask) && $prompt_fh->flush
+                     or croak "Failed to write $state->{writing_to}: $!";
+               }
+               # If reached the char_count, return success
+               last if $char_count && $self->length - $start_len == $char_count;
+            }
          }
       }
    }

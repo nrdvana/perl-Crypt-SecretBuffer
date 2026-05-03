@@ -863,8 +863,8 @@ static int sb_parse_next_codepoint(secret_buffer_parse *parse) {
             cp= (cp << 6) | (*pos++ & 0x3F);
             break;
          default:
-            invalid:    SB_RETURN_ERROR("invalid UTF8 character")
-            incomplete: SB_RETURN_ERROR("incomplete UTF8 character")
+            invalid:    SB_RETURN_ERROR("invalid UTF8 encoding")
+            incomplete: SB_RETURN_ERROR("incomplete UTF8 encoding")
          }
          if (cp < min_cp)
             SB_RETURN_ERROR("overlong encoding of UTF8 character")
