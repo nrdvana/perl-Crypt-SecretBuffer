@@ -479,10 +479,11 @@ C<< ($ofs .. $ofs+$len) >> rather than just starting before the ending offset.
 
 Eventually, this function may be enhanced with full regex support, but for now
 it is limited to one character class and optionally a '+' modifier as an alias
-for flag C<MATCH_MULTI>.  Until that enhancement occurs, your regex notation must
-start with C<[> and must end with either C<]> or C<+>.
+for flag C<MATCH_MULTI>.  Until that enhancement occurs, your regex notation
+for the character class must start with C<[> and end with C<]>, or be one of
+the special classes C<< . \s \S \d \D \w \W >>.
 
-  ($ofs, $len)= $buf->scan(qr/[\w]+/); # implies MATCH_MULTI
+  ($ofs, $len)= $buf->scan(qr/\w+/); # implies MATCH_MULTI
 
 The C<$flags> may be a bitwise OR of the L</Match Flags> and one
 L<Character Encoding|/Character Encodings>.
