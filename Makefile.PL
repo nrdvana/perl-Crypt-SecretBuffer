@@ -60,12 +60,6 @@ unless ($ctest->feature(HAVE_BOOL => 'bool x= true; return x == false;')) {
    );
 }
 
-$ctest->feature(HAVE_LIBSSL =>
-    'unsigned char buf[1]; return RAND_bytes(buf, 1) == 1? 0 : 1;',
-    { h => 'openssl/rand.h', pkg_config => ['libressl'] },
-    { h => 'openssl/rand.h', pkg_config => ['openssl'] },
-    { h => 'openssl/rand.h', -l => [ 'ssl', 'crypto' ] });
-
 $ctest->header('string.h');
 $ctest->feature(HAVE_EXPLICIT_BZERO => 'char buf[1]= { 1 }; explicit_bzero(buf, 1); return buf[0];');
 $ctest->feature(HAVE_MEMMEM         => 'return memmem("foo", 3, "bar", 3)? 1 : 0;');

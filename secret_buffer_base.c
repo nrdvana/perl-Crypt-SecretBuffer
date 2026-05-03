@@ -179,8 +179,6 @@ void secret_buffer_splice_sv(secret_buffer *buf, size_t ofs, size_t len, SV *rep
 }
 
 /* This is just exposing the wipe function of this library for general use.
- * It will be OPENSSL_cleanse if openssl (and headers) were available when this package was
- * compiled, or a simple 'explicit_bzero' or 'Zero' otherwise.
  */
 void secret_buffer_wipe(char *buf, size_t len) {
 #if defined WIN32
@@ -188,7 +186,7 @@ void secret_buffer_wipe(char *buf, size_t len) {
 #elif defined(HAVE_EXPLICIT_BZERO)
    explicit_bzero(buf, len);
 #else
-   /* this ought to be sufficient anyway because its within an extern function */
+   /* this ought to be sufficient anyway because it's within an extern function */
    Zero(buf, len, char);
 #endif
 }
