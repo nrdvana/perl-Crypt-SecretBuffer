@@ -15,13 +15,6 @@
 #endif
 
 #include "SecretBuffer_config.h"
-
-#ifndef HAVE_BOOL
-   #define bool int
-   #define true 1
-   #define false 0
-#endif
-
 #include "SecretBuffer.h"
 #include "SecretBufferManualLinkage.h"
 
