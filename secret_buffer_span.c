@@ -36,7 +36,7 @@ int secret_buffer_span_magic_dup(pTHX_ MAGIC *mg, CLONE_PARAMS *param) {
 }
 #endif
 
-static SV *new_mortal_span_obj(pTHX_ secret_buffer *buf, UV pos, UV lim, int encoding) {
+static SV *new_mortal_span_obj(pTHX_ secret_buffer *buf, size_t pos, size_t lim, int encoding) {
    HV *hv= newHV();
    SV *ref= sv_2mortal(newRV_noinc((SV*) hv));
    sv_bless(ref, gv_stashpv("Crypt::SecretBuffer::Span", GV_ADD));

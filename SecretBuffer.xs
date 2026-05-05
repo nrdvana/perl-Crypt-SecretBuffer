@@ -43,14 +43,15 @@ int sb_parse_codepointcmp(secret_buffer_parse *lhs, secret_buffer_parse *rhs);
 /* Common perl idioms for negative offset or negative count meaning a position
  * measured backward from the end.
  */
-static inline IV normalize_offset(IV ofs, IV len) {
-   if (ofs < 0) {
-      ofs += len;
-      if (ofs < 0)
-         ofs= 0;
+PERL_STATIC_INLINE size_t normalize_offset(IV ofs_iv, size_t len) {
+   size_t ofs;
+   if (ofs_iv < 0) {
+      UV back = (UV)(-(ofs_iv + 1)) + 1; /* safe for IV_MIN */
+      ofs= (back > (UV) len)? 0 : len - (size_t) back;
    }
-   else if (ofs > len)
-      ofs= len;
+   else {
+      ofs= ((UV)ofs_iv > (UV)len)? len : (size_t) ofs_iv;
+   }
    return ofs;
 }
 
@@ -548,7 +549,10 @@ length(buf, val=NULL)
       if (val) { /* writing */
          IV ival= SvIV(val);
          if (ival < 0) ival= 0;
-         secret_buffer_set_len(buf, ival);
+         if (sizeof(IV) > sizeof(size_t))
+            if ((UV)ival > (UV)SIZE_MAX)
+               croak("size_t overflow");
+         secret_buffer_set_len(buf, (size_t) ival);
          /* return self, for chaining */
       }
       else /* reading */
@@ -564,10 +568,13 @@ capacity(buf, val=NULL, flags= 0)
       if (val) { /* wiritng */
          IV ival= SvIV(val);
          if (ival < 0) ival= 0;
+         if (sizeof(IV) > sizeof(size_t))
+            if ((UV)ival > (UV)SIZE_MAX)
+               croak("size_t overflow");
          if (flags & SECRET_BUFFER_AT_LEAST)
-            secret_buffer_alloc_at_least(buf, ival);
+            secret_buffer_alloc_at_least(buf, (size_t) ival);
          else
-            secret_buffer_realloc(buf, ival);
+            secret_buffer_realloc(buf, (size_t) ival);
          /* return self, for chaining */
       }
       else /* reading */
@@ -596,7 +603,7 @@ index(buf, pattern, ofs_sv= &PL_sv_undef)
          pos= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : 0, buf->len);
          lim= buf->len;
       } else { // rindex (reverse)
-         IV max= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : -1, buf->len);
+         size_t max= normalize_offset(SvOK(ofs_sv)? SvIV(ofs_sv) : -1, buf->len);
          flags= SECRET_BUFFER_MATCH_REVERSE;
          // The ofs specifies the *start* of the match, not the maximum byte pos
          // that could be part of the match.  If pattern is a charset, add one to get 'lim',
@@ -625,20 +632,20 @@ index(buf, pattern, ofs_sv= &PL_sv_undef)
       RETVAL
 
 void
-scan(buf, pattern, flags= 0, ofs= 0, len_sv= &PL_sv_undef)
+scan(buf, pattern, flags= 0, ofs_iv= 0, len_sv= &PL_sv_undef)
    secret_buffer *buf
    SV *pattern
-   IV flags
-   IV ofs
+   int flags
+   IV ofs_iv
    SV *len_sv
    INIT:
       secret_buffer_parse parse;
       // lim was captured as an SV so that undef can be used to indicate
       // end of the buffer.
-      IV len= !SvOK(len_sv)? buf->len : SvIV(len_sv);
-      ofs= normalize_offset(ofs, buf->len);
+      IV len_iv= !SvOK(len_sv)? buf->len : SvIV(len_sv);
+      size_t ofs= normalize_offset(ofs_iv, buf->len);
       if (!secret_buffer_parse_init(&parse, buf,
-         ofs, ofs + normalize_offset(len, buf->len - ofs),
+         ofs, ofs + normalize_offset(len_iv, buf->len - ofs),
          (flags & SECRET_BUFFER_ENCODING_MASK)
       ))
          croak("%s", parse.error);
@@ -651,35 +658,37 @@ scan(buf, pattern, flags= 0, ofs= 0, len_sv= &PL_sv_undef)
          croak("%s", parse.error);
 
 void
-splice(buf, ofs, len, replacement)
+splice(buf, ofs_iv, len_iv, replacement)
    secret_buffer *buf
-   IV ofs
-   IV len
+   IV ofs_iv
+   IV len_iv
    SV *replacement
-   PPCODE:
+   INIT:
       /* normalize negative offset, and clamp to valid range */
-      ofs= normalize_offset(ofs, buf->len);
+      size_t ofs= normalize_offset(ofs_iv, buf->len);
       /* normalize negative count, and clamp to valid range */
-      len= normalize_offset(len, buf->len - ofs);
+      size_t len= normalize_offset(len_iv, buf->len - ofs);
+   PPCODE:
       secret_buffer_splice_sv(buf, ofs, len, replacement);
       XSRETURN(1); /* return $self */
 
 void
-substr(buf, ofs, count_sv=NULL, replacement=NULL)
+substr(buf, ofs_iv, count_sv=NULL, replacement=NULL)
    secret_buffer *buf
-   IV ofs
+   IV ofs_iv
    SV *count_sv
    SV *replacement
    INIT:
       unsigned char *sub_start;
       secret_buffer *sub_buf= NULL;
       SV *sub_ref= NULL;
-      IV count= count_sv? SvIV(count_sv) : buf->len;
+      IV count_iv= count_sv? SvIV(count_sv) : buf->len;
+      size_t count, ofs;
    PPCODE:
       /* normalize negative offset, and clamp to valid range */
-      ofs= normalize_offset(ofs, buf->len);
+      ofs= normalize_offset(ofs_iv, buf->len);
       /* normalize negative count, and clamp to valid range */
-      count= normalize_offset(count, buf->len - ofs);
+      count= normalize_offset(count_iv, buf->len - ofs);
       sub_start= (unsigned char*) buf->data + ofs;
       /* If called in non-void context, construct new secret from this range */
       if (GIMME_V != G_VOID) {
@@ -786,7 +795,7 @@ memcmp(lhs, rhs, reverse=false)
 UV
 append_random(buf, count, flags=0)
    auto_secret_buffer buf
-   UV count
+   size_t count
    secret_buffer_io_flags flags
    CODE:
       RETVAL= secret_buffer_append_random(buf, count, flags);
@@ -797,7 +806,7 @@ void
 append_sysread(buf, handle, count)
    auto_secret_buffer buf
    PerlIO *handle
-   IV count
+   size_t count
    INIT:
       IV got;
    PPCODE:
@@ -811,9 +820,9 @@ void
 append_read(buf, handle, count)
    auto_secret_buffer buf
    PerlIO *handle
-   IV count
+   size_t count
    INIT:
-      int got;
+      IV got;
    PPCODE:
       got= secret_buffer_append_read(buf, handle, count);
       if (got < 0)
@@ -908,7 +917,7 @@ _count_matches_in_mem(buf, addr0, addr1)
    CODE:
       if (!buf->len)
          croak("Empty buffer");
-      RETVAL= scan_mapped_memory_in_range(addr0, addr1, buf->data, buf->len);
+      RETVAL= scan_mapped_memory_in_range((uintptr_t)addr0, (uintptr_t)addr1, buf->data, buf->len);
       if (RETVAL < 0)
          croak("Unimplemented");
    OUTPUT:
@@ -1229,11 +1238,15 @@ pos(span, newval_sv= NULL)
          IV newval= SvIV(newval_sv);
          if (newval < 0)
             croak("pos, lim, and len cannot be negative");
+         if (sizeof(UV) > sizeof(size_t))
+            if ((UV)newval > (UV)SIZE_MAX)
+               croak("overflow");
          switch (ix) {
-         case 0: span->pos= newval; break;
+         case 0: span->pos= (size_t) newval; break;
          case 1: if (newval < span->pos) croak("lim must be >= pos");
-                 span->lim= newval; break;
-         case 2: span->lim= span->pos + newval;
+                 span->lim= (size_t) newval; break;
+         case 2: if (newval > SIZE_MAX - span->pos) newval = SIZE_MAX - span->pos;
+                 span->lim= span->pos + (size_t) newval;
          default: croak("BUG");
          }
       }
@@ -1299,7 +1312,7 @@ void
 scan(self, pattern=NULL, flags= 0)
    SV *self
    SV *pattern
-   IV flags
+   int flags
    ALIAS:
       parse       = 0x102
       rparse      = 0x203
@@ -1402,7 +1415,7 @@ parse_lenprefixed(self, count = 1)
             XSRETURN_EMPTY;
          }
          ofs= p.pos - (U8*) p.sbuf->data;
-         XPUSHs(secret_buffer_span_new_obj(p.sbuf, ofs, ofs + len, 0));
+         XPUSHs(secret_buffer_span_new_obj(p.sbuf, ofs, ofs + (size_t) len, 0));
          p.pos += len;
          if (count > 0) --count;
       }

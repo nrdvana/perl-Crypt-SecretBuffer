@@ -62,11 +62,11 @@ static MGVTBL secret_buffer_charset_magic_vtbl = {
 };
 
 /* Set a bit in the bitmap */
-static inline void sbc_bitmap_set(uint64_t *bitmap, U8 c) {
+PERL_STATIC_INLINE void sbc_bitmap_set(uint64_t *bitmap, U8 c) {
    bitmap[c >> 6] |= (1ULL << (c & 63));
 }
 /* Test for byte in bitmap */
-static inline bool sbc_bitmap_test(const uint64_t *bitmap, U8 c) {
+PERL_STATIC_INLINE bool sbc_bitmap_test(const uint64_t *bitmap, U8 c) {
    return (bitmap[c >> 6] >> (c & 63)) & 1;
 }
 
@@ -194,7 +194,7 @@ static bool parse_simple_charclass(pTHX_ secret_buffer_charset *cset, SV *qr_ref
          /* is it a special constant? */
          case 'a': c= '\a'; break;
          case 'b': c= '\b'; break;
-         case 'e': c= '\e'; break;
+         case 'e': c= 27; break; /* \e doesn't exist in Visual Studio 12 */
          case 'f': c= '\f'; break;
          case 'n': c= '\n'; break;
          case 'r': c= '\r'; break;

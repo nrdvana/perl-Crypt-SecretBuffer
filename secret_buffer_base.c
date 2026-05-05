@@ -148,7 +148,7 @@ void secret_buffer_splice(secret_buffer *buf, size_t ofs, size_t len,
       const char *replacement, size_t replacement_len
 ) {
    dTHX;
-   IV tail_len;
+   size_t tail_len;
    const char *splice_pos;
 
    if (ofs > buf->len)
