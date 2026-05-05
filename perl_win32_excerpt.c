@@ -1,4 +1,4 @@
-/* This is copied verbatim from perl's win32/win32.c and covered under the
+/* This is copied verbatim from perl's source code and covered under the
  * copyright of Perl, rather than that of this distribution.
  * I think this is OK since this dist is specifically licensed under the same
  * terms as perl itself.
@@ -8,6 +8,12 @@
  * after a failed call that was based on a Win32 API call.
  */
 
+/* win32/include/sys/errno2.h */
+#ifndef EDQUOT                  /* Not in errno.h but wanted by POSIX.pm */
+#  define EDQUOT                WSAEDQUOT
+#endif
+
+/* win32/win32.c */
 static void
 translate_to_errno(void)
 {
