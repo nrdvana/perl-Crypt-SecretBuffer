@@ -202,7 +202,10 @@ as well as the C<wantarray> context.
   $cmp= memcmp($thing1, $thing2);
 
 This function always compares bytes, and the arguments can be L<SecretBuffer|Crypt::SecretBuffer>
-objects, L<Span|Crypt::SecretBuffer::Span> objects, scalar-refs, and scalars.
+objects, L<Span|Crypt::SecretBuffer::Span> objects, scalar-refs, and scalars.  Since version
+0.019 this runs in constant time of the shortest string.  This may or may not be enough timing
+obfuscation to prevent side-channel attacks in your application; better constant-time algorithms
+exist, and it is up to you to decide whether you need one.
 
 =back
 
@@ -274,14 +277,14 @@ Require the match begin at the start of the specified span of the buffer.
 
 =item MATCH_CONST_TIME
 
-Don't shortcut any loops on a non-matching byte/character.  This helps prevent timing attacks
-by making all searches take the same length of time, but beware that this guarantees you always
+Don't shortcut any loops on a non-matching byte/character.  This helps mitigate timing attacks
+by making all searches take similar lengths of time, but beware that this guarantees you always
 get the worst-case performance of C<< O(N*M) >> when searching for a string within a secret.
 
-NOTE: currently there is still about 15% difference in speed between the different code paths
-of L</scan> between matching the start of the buffer vs. matching the end, due to complex
-branching with all these match options.  An attacker would likely only be able to measure this
-for particularly large buffers, though.  Patches welcome.
+NOTE: currently there can still be about 15% difference in speed between the different code
+paths of L</scan> between matching the start of the buffer vs. matching the end, due to complex
+branching with all these match options.  This may or may not be enough timing obfuscation to
+prevent side-channel attacks in your application; it is up to you to decide this.
 
 =back
 
@@ -348,6 +351,14 @@ the buffer does not need reallocated if it is already large enough.
 This gets or sets the length of the string in the buffer.  If you set it to a smaller value,
 the string is truncated.  If you set it to a larger value, the L</capacity> is raised as needed
 and the bytes are initialized with zeroes.
+
+=over
+
+=item len
+
+Convenient alias, matching Span object's "len" attribute
+
+=back
 
 =method clear
 
@@ -499,8 +510,10 @@ L<Span object|Crypt::SecretBuffer::Span> and then call its methods.
   $cmp= $buf->memcmp($buf2);
 
 Compare contents of the buffer byte-by-byte to another SecretBuffer (or Span, or plain scalar)
-in the same manner as the C function C<memcmp> but in constant time. (iterating the full length
-of the shortest string to prevent timing attacks)
+in the same manner as the C function C<memcmp>.  Since version 0.019 this runs in constant time
+of the shortest string.  This may or may not be enough timing obfuscation to prevent
+side-channel attacks in your application; better constant-time algorithms exist, and it is up
+to you to decide whether you need one.
 
 =method append_lenprefixed
 
@@ -552,6 +565,7 @@ of bytes and never blocks.
   # prompt     => "Enter Password: "    print prompt after disabling echo
   # input_fh   => $readable_handle      handle for reading chars
   # prompt_fh  => $writeable_handle     handle for writing prompt
+  # utf8       => $bool                 add only valid utf-8 sequences to the buffer
   # char_mask  => "*"                   show each char typed as '*'
   # char_count => $n                    return success only at exactly N characters
   # char_max   => $n                    stop adding characters after $n added
