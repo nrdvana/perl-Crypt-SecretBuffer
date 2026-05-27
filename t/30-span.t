@@ -376,6 +376,30 @@ subtest copy_base64 => sub {
       secret($b64)->span(encoding => BASE64)->copy_to($tmp, encoding => ISO8859_1);
       is( $tmp, $str, "decode $b64" );
    }
+
+   my $tmp;
+   secret("abcdefghijkl")->span->copy_to($tmp,
+      encoding => BASE64,
+      wrap => 8,
+      wrap_delim => '--',
+   );
+   is( $tmp, "YWJjZGVm--Z2hpamts", 'base64 wrap and join' );
+
+   secret("abcdefghijkl")->span->copy_to($tmp,
+      encoding => BASE64,
+      wrap => 8,
+   );
+   is( $tmp, "YWJjZGVm\nZ2hpamts", 'base64 wrap default join newline' );
+};
+
+subtest copy_hex_wrap => sub {
+   my $tmp;
+   secret("abcdef")->span->copy_to($tmp,
+      encoding => HEX,
+      wrap => 4,
+      wrap_delim => ':',
+   );
+   is( $tmp, '6162:6364:6566', 'hex wrap and join' );
 };
 
 subtest codepointcmp => sub {
