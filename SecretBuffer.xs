@@ -1464,6 +1464,9 @@ copy(self, ...)
    INIT:
       SV *dst_sv= NULL;
       int next_arg, dst_encoding= -1;
+      IV encode_wrap= 0;
+      SV *encode_wrap_delim= NULL;
+      bool encode_wrap_specified= false;
       secret_buffer_parse src;
       if (!secret_buffer_parse_init_from_sv(&src, self))
          croak("%s", src.error);
@@ -1486,7 +1489,25 @@ copy(self, ...)
          if (0 == strcmp(SvPV_nolen(ST(next_arg)), "encoding")) {
             if (!parse_encoding(aTHX_ ST(next_arg+1), &dst_encoding))
                croak("Unknown encoding");
+         } else if (0 == strcmp(SvPV_nolen(ST(next_arg)), "wrap")) {
+            encode_wrap_specified= true;
+            encode_wrap= SvIV(ST(next_arg+1));
+            if (encode_wrap < 0)
+               croak("wrap must be >= 0");
+         } else if (0 == strcmp(SvPV_nolen(ST(next_arg)), "wrap_delim")) {
+            encode_wrap_delim= ST(next_arg+1);
          }
+      }
+      if (encode_wrap_specified) {
+         save_scalar(gv_fetchpv("Crypt::SecretBuffer::_encode_wrap", GV_ADD, SVt_IV));
+         sv_setiv(get_sv("Crypt::SecretBuffer::_encode_wrap", GV_ADD), encode_wrap);
+      }
+      if (encode_wrap_delim) {
+         STRLEN wrap_delim_len;
+         const char *wrap_delim_str;
+         save_scalar(gv_fetchpv("Crypt::SecretBuffer::_encode_wrap_delim", GV_ADD, SVt_PV));
+         wrap_delim_str= SvPVbyte(encode_wrap_delim, wrap_delim_len);
+         sv_setpvn(get_sv("Crypt::SecretBuffer::_encode_wrap_delim", GV_ADD), wrap_delim_str, wrap_delim_len);
       }
       if (!secret_buffer_copy_to(&src, dst_sv, dst_encoding, ix == 2))
          croak("copy failed: %s", src.error);

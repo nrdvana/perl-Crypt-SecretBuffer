@@ -18,6 +18,7 @@ static bool sb_parse_match_charset_bytes(secret_buffer_parse *parse, const secre
 static bool sb_parse_match_charset_codepoints(secret_buffer_parse *parse, const secret_buffer_charset *cset, int flags);
 static bool sb_parse_match_str_U8(secret_buffer_parse *parse, const U8 *pattern, size_t pattern_len, int flags);
 static bool sb_parse_match_str_I32(secret_buffer_parse *parse, const I32 *pattern, size_t pattern_len, int flags);
+static void get_encode_wrap_opts(pTHX_ size_t *wrap, const U8 **join, size_t *join_len);
 
 static bool parse_encoding(pTHX_ SV *sv, int *out) {
    int enc;
@@ -206,6 +207,7 @@ bool secret_buffer_match_bytestr(secret_buffer_parse *parse, char *data, size_t 
  * and also sets src->pos pointing at the character that could not be converted.
  */
 SSize_t secret_buffer_sizeof_transcode(secret_buffer_parse *src, int dst_encoding) {
+   dTHX;
    // If the source and destination encodings are both bytes, return the length
    if (dst_encoding == src->encoding && src->encoding == 0)
       return src->lim - src->pos;
@@ -227,6 +229,15 @@ SSize_t secret_buffer_sizeof_transcode(secret_buffer_parse *src, int dst_encodin
       // If dest is base64, need special calculation
       if (dst_encoding == SECRET_BUFFER_ENCODING_BASE64) {
          dst_size_needed= ((dst_size_needed + 2) / 3) * 4;
+      }
+      if (dst_encoding == SECRET_BUFFER_ENCODING_BASE64
+       || dst_encoding == SECRET_BUFFER_ENCODING_HEX
+      ) {
+         const U8 *join;
+         size_t wrap, join_len;
+         get_encode_wrap_opts(aTHX_ &wrap, &join, &join_len);
+         if (wrap && join_len && dst_size_needed > wrap)
+            dst_size_needed += ((dst_size_needed - 1) / wrap) * join_len;
       }
       return dst_size_needed;
    }
@@ -266,6 +277,27 @@ static const int8_t base64_decode_table[256]= {
    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
 };
 
+static void get_encode_wrap_opts(pTHX_ size_t *wrap, const U8 **join, size_t *join_len) {
+   SV *sv;
+   static const U8 default_join[] = "\n";
+   *wrap= 0;
+   *join= (const U8*) NULL;
+   *join_len= 0;
+   sv= get_sv("Crypt::SecretBuffer::_encode_wrap", 0);
+   if (sv && SvOK(sv)) {
+      IV wrap_iv= SvIV(sv);
+      if (wrap_iv > 0)
+         *wrap= (size_t) wrap_iv;
+   }
+   sv= get_sv("Crypt::SecretBuffer::_encode_wrap_delim", 0);
+   if (sv && SvOK(sv))
+      *join= (const U8*) SvPVbyte(sv, *join_len);
+   else if (*wrap) {
+      *join= default_join;
+      *join_len= 1;
+   }
+}
+
 /* Transcode characters from one parse state into another.
  * This works sort of like
  *   $data= decode($src_enc, substr($src, $src_pos, $src_len));
@@ -275,6 +307,7 @@ static const int8_t base64_decode_table[256]= {
  * are updated.
  */
 bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse_rw *dst) {
+   dTHX;
    src->error= NULL;
    dst->error= NULL;
    // If the source and destination encodings are both bytes, use memcpy
@@ -292,6 +325,9 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse_rw *d
    // base64 encoding doesn't work with sb_parse_encode_codepoint, so it gets
    // special treatment.
    else if (dst->encoding == SECRET_BUFFER_ENCODING_BASE64) {
+      const U8 *join;
+      size_t wrap, join_len, line_pos= 0;
+      get_encode_wrap_opts(aTHX_ &wrap, &join, &join_len);
       // Read 3, write 4
       int accum= 0;
       int shift= 16, cp;
@@ -302,7 +338,17 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse_rw *d
             return false;
          }
          if (!shift) {
-            U8 *writable= (U8*) dst->pos;
+            U8 *writable;
+            if (wrap && line_pos && line_pos + 4 > wrap && join_len) {
+               if (dst->pos + join_len > dst->lim) {
+                  dst->error= "miscalculated buffer length";
+                  return false;
+               }
+               memcpy((U8*)dst->pos, join, join_len);
+               dst->pos += join_len;
+               line_pos= 0;
+            }
+            writable= (U8*) dst->pos;
             if (dst->pos + 4 > dst->lim) {
                dst->error= "miscalculated buffer length";
                return false;
@@ -315,6 +361,7 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse_rw *d
             writable[3] = base64_alphabet[0x3F & accum];
             accum= 0;
             shift= 16;
+            line_pos += 4;
          }
          else {
             accum |= (cp << shift);
@@ -327,7 +374,17 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse_rw *d
       }
       // write leftover accumulated bits
       if (shift < 16) {
-         U8 *writable= (U8*) dst->pos;
+         U8 *writable;
+         if (wrap && line_pos && line_pos + 4 > wrap && join_len) {
+            if (dst->pos + join_len > dst->lim) {
+               dst->error= "miscalculated buffer length";
+               return false;
+            }
+            memcpy((U8*)dst->pos, join, join_len);
+            dst->pos += join_len;
+            line_pos= 0;
+         }
+         writable= (U8*) dst->pos;
          if (dst->pos + 4 > dst->lim) {
             dst->error= "miscalculated buffer length";
             return false;
@@ -337,6 +394,39 @@ bool secret_buffer_transcode(secret_buffer_parse *src, secret_buffer_parse_rw *d
          writable[1] = base64_alphabet[0x3F & (accum >> 12)];
          writable[2] = shift? '=' : base64_alphabet[0x3F & (accum >> 6)];
          writable[3] = '=';
+      }
+   }
+   else if (dst->encoding == SECRET_BUFFER_ENCODING_HEX) {
+      const U8 *join;
+      size_t wrap, join_len, line_pos= 0;
+      get_encode_wrap_opts(aTHX_ &wrap, &join, &join_len);
+      while (src->pos < src->lim) {
+         int cp= sb_parse_next_codepoint(src);
+         U8 *writable;
+         if (cp < 0)
+            return false;
+         if (cp > 0xFF) {
+            dst->error= "byte out of range";
+            return false;
+         }
+         if (wrap && line_pos && line_pos + 2 > wrap && join_len) {
+            if (dst->pos + join_len > dst->lim) {
+               dst->error= "miscalculated buffer length";
+               return false;
+            }
+            memcpy((U8*)dst->pos, join, join_len);
+            dst->pos += join_len;
+            line_pos= 0;
+         }
+         if (dst->pos + 2 > dst->lim) {
+            dst->error= "miscalculated buffer length";
+            return false;
+         }
+         writable= (U8*) dst->pos;
+         dst->pos += 2;
+         writable[0] = "0123456789ABCDEF"[(cp >> 4) & 0xF];
+         writable[1] = "0123456789ABCDEF"[cp & 0xF];
+         line_pos += 2;
       }
    }
    else {

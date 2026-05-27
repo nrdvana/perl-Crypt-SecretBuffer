@@ -288,6 +288,16 @@ and the source encoding was a type of unicode, in which case the default is to c
 "wide characters" (which is internally UTF-8).  If you specify UTF-8 here, you will receive
 bytes of UTF-8 rather than perl wide characters.
 
+=item wrap => $integer
+
+When encoding output as C<BASE64> or C<HEX>, insert separators after every
+C<wrap> encoded characters.  Set this to 0 (default) to disable wrapping.
+
+=item wrap_delim => $string
+
+When C<wrap> is enabled, this is the byte string inserted between wrapped
+chunks.  If omitted, wrapping does not insert anything.
+
 =back
 
 =method memcmp
