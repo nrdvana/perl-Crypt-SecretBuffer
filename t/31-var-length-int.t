@@ -81,6 +81,13 @@ subtest lenprefixed => sub {
    is( [ $span->parse_lenprefixed ], [ object { call [memcmp => "Other"], 0; } ], 'parse one' );
    is( $span->pos, 16, 'pos updated' );
    is( $span->last_error, undef, 'no error' );
+
+   # Test using an 'unpack' format for the length
+   $s= secret("\x05\0\0\x{00}123456");
+   is( [ $s->span->parse_lenprefixed('C') ], [ object { call [memcmp => "\0\0\x{00}12"], 0; } ], 'uint8 prefix' );
+   is( [ $s->span->parse_lenprefixed('v') ], [ object { call [memcmp => "\0\x{00}123"], 0; } ], 'uint16 prefix' );
+   is( [ $s->span->parse_lenprefixed('V') ], [ object { call [memcmp => "12345"], 0; } ], 'uint32 prefix' );
+   is( [ $s->span->parse_lenprefixed('n') ], [], 'returns empty on overrun' );
 };
 
 done_testing;

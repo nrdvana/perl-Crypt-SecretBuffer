@@ -1309,7 +1309,6 @@ static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_le
 
       switch (code) {
       case ' ': continue;
-      case 'x': n_bytes= 1; is_signed= -1; break;
       case 'c': n_bytes= 1; is_signed= 1; break;
       case 'C': n_bytes= 1; break;
       case 's': n_bytes= 2; is_signed= 1; break;
@@ -1322,6 +1321,8 @@ static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_le
       case 'V': n_bytes= 4; endian= -1; break;
       case 'n': n_bytes= 2; endian=  1; break;
       case 'N': n_bytes= 4; endian=  1; break;
+      case 'x': n_bytes= 0; break; /* skip bytes */
+      case 'w': n_bytes= 0; break; /* base128 */
       case '(': {
             /* find the end of the parenthetical expression */
             int depth= 1;
@@ -1387,13 +1388,29 @@ static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_le
                return false;
          }
       }
-      else if (code == 'x') { /* skip bytes */
-         size_t skip_n= (size_t)n_bytes * (size_t)rep_count;
-         if (p->lim - p->pos < skip_n) {
-            p->error= "End of span";
-            return false;
+      else if (!n_bytes) {
+         if (code == 'x') { /* skip bytes */
+            if (rep_count > (size_t)(p->lim - p->pos)) {
+               p->error= "End of span";
+               return false;
+            }
+            p->pos += rep_count;
          }
-         p->pos += skip_n;
+         else if (code == 'w') {
+            while (rep_count-- > 0) {
+               UV val= 0;
+               if ( /* default is big-endian, but can be overridden with '<' */
+                  endian < 0? secret_buffer_parse_uv_base128le(p, &val)
+                            : secret_buffer_parse_uv_base128be(p, &val)
+               )
+                  av_push_simple(dst, newSVuv(val));
+               else
+                  return false; /* p.error is already set */
+            }
+         }
+         else {
+            croak("BUG");
+         }
       }
       else {
          while (rep_count-- > 0) {
@@ -1428,18 +1445,26 @@ static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_le
                   memcpy((void*)&x, p->pos, sizeof(x));
                   if (endian < 0) x= le64toh(x);
                   else if (endian > 0) x= be64toh(x);
-#if UVSIZE >= 8
+#if UVSIZE >= 8 && IVSIZE >= 8
                   val= is_signed? newSViv((int64_t)x) : newSVuv(x);
 #else
-                  { /* automatically use BigInt instead of croaking if Q isn't supported by perl */
+                  /* does the value fit in UV/IV anyway? */
+                  if (!is_signed && (uint64_t)(UV)x == x)
+                     val= newSVuv((UV)x);
+                  else if (is_signed && (int64_t)(IV)(int64_t)x == (int64_t)x)
+                     val= newSViv((IV)x);
+                  else {
+                     /* automatically use BigInt instead of croaking if Q isn't supported by perl */
                      dSP;
                      SV *hex;
+                     int count;
                      bool negative= false;
-                     if (x >> 63) {
+
+                     if (is_signed && (x >> 63)) {
                         x= ~x + 1; /* twos complement */
                         negative= true;
                      }
-                     hex= sv_2mortal(Perl_newSVpvf(aTHX_,
+                     hex= sv_2mortal(newSVpvf(
                         negative? "-0x%08lX%08lX" : "0x%08lX%08lX",
                         (unsigned long)((x >> 32) & 0xFFFFFFFFul),
                         (unsigned long)(x & 0xFFFFFFFFul)));
@@ -1454,12 +1479,13 @@ static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_le
                      PUTBACK;
                      count= call_method("new", G_SCALAR);
                      SPAGAIN;
-                     if (count != 1)
-                        croak("Math::BigInt->new did not return a scalar");
-                     val= SvREFCNT_inc(POPs);
+                     if (count == 1)
+                        val= SvREFCNT_inc(POPs);
                      PUTBACK;
                      FREETMPS;
                      LEAVE;
+                     if (count != 1)
+                        croak("Math::BigInt->new did not return a scalar");
                   }
 #endif
                }

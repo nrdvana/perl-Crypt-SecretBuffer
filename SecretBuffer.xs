@@ -6,6 +6,7 @@
 #define NEED_newAV_mortal
 #define NEED_mPUSHs
 #define NEED_mg_findext
+#define NEED_newSVpvs
 #define NEED_newSVpvn_share
 #define NEED_SvRX
 #define NEED_RX_PRECOMP
@@ -1402,24 +1403,68 @@ scan(self, pattern=NULL, flags= 0)
       }
 
 void
-parse_lenprefixed(self, count = 1)
+parse_lenprefixed(self, fmt_sv= NULL, count_sv= NULL)
    SV *self
-   IV count
+   SV *fmt_sv
+   SV *count_sv
    INIT:
       secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
       secret_buffer_parse p;
       UV len;
       size_t ofs;
+      const U8 *fmt= NULL;
+      STRLEN fmt_len= 0;
+      AV *unpacked_vals= NULL;
+      IV count= 1;
       /* treat an invalid span as a bug, rather than returning it to the user in the err_out param */
       if (!secret_buffer_parse_init_from_sv(&p, self))
          croak("%s", p.error);
+      if (fmt_sv) {
+         /* If the format looks like a number, it's the count */
+         if (!count_sv && looks_like_number(fmt_sv))
+            count_sv= fmt_sv;
+         else {
+            fmt= SvPVbyte(fmt_sv, fmt_len);
+            unpacked_vals= newAV_mortal();
+         }
+      }
+      if (count_sv) {
+         count= SvIV(count_sv);
+         /* -1 means as many as possible, but other negative values are not permitted */
+         if (count < -1)
+            croak("Invalid count");
+      }
    PPCODE:
       while (count && p.pos < p.lim) {
-         if (!secret_buffer_parse_uv_base128be(&p, &len)) {
-            span->last_error= p.error;
-            XSRETURN_EMPTY;
+         if (fmt_len) { /* custom unpack format if fmt is defined, else base128be */
+            SV *len_sv;
+            if (!sb_parse_unpack(&p, fmt, fmt_len, unpacked_vals, 0, 0)) {
+               span->last_error= p.error;
+               XSRETURN_EMPTY;
+            }
+            if (av_count(unpacked_vals) != 1)
+               croak("unpack specification must return exactly one integer");
+            /* number of bytes must fit in UV.  The sb_parse_unpack returns a UV or IV if
+             * possible, or a BigInt on 4-byte IV perls if the value can't fit in UV/IV. */
+            len_sv= av_pop(unpacked_vals);
+            if (SvUOK(len_sv))
+               len= SvUV(len_sv);
+            else if (SvIOK(len_sv) && SvIV(len_sv) >= 0)
+               len= (UV) SvIV(len_sv);
+            else {
+               SvREFCNT_dec(len_sv);
+               span->last_error= "Negative value or overflow while unpacking into UV";
+               XSRETURN_EMPTY;
+            }
+            SvREFCNT_dec(len_sv);
+         } else {
+            /* default format is 'w', base128 big-endian */
+            if (!secret_buffer_parse_uv_base128be(&p, &len)) {
+               span->last_error= p.error;
+               XSRETURN_EMPTY;
+            }
          }
-         if (len > p.lim - p.pos) {
+         if (len > (size_t)(p.lim - p.pos)) {
             span->last_error= "Length exceeds end of Span";
             XSRETURN_EMPTY;
          }

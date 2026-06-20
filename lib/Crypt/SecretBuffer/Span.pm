@@ -169,21 +169,40 @@ Only remove from the end of the Span
 
 =method parse_lenprefixed
 
-  $span= $span->parse_lenprefixed # count=1
+  @spans= $span->parse_lenprefixed($format, $count)
     or croak $span->last_error;
-  @spans= $span->parse_lenprefixed($count)
-    or croak $span->last_error;
-  @spans= $span->parse_lenprefixed(-1);
+  
+  # default $format is 'w', Big-Endian Base128
+  # default $count is 1
+  $span= $span->parse_lenprefixed;
+  
+  @spans= $span->parse_lenprefixed(5); # count=5
+  @spans= $span->parse_lenprefixed(-1); # count=as many as available
+  $spans= $span->parse_lenprefixed('N'); # format = 'N', Big-Endian 32-bit
 
 Parse one or more length-prefixed spans from the start of this span, returning a list of Span
-objects and updating C<pos> if fully successful.  This first parses a variable-length
-Base128-BigEndian integer, then ensures that there are that many bytes remaining in the span,
-then creates a Span object describing those bytes and advances C<pos> and possibly repeats.
-If the variable-length intgeer is malformed, or not enough bytes remain for the span, the method
-returns an empty list and sets the L</last_error> attribute.
-If you request a count greater than one, all the attempts must succeed or the method returns an
-empty list and sets C<last_error>.  Requesting a count of C<-1> means to consume the remainder
-of the span, which must terminate cleanly at the end of a length-prefixed string.
+objects and updating C<pos> if fully successful.  This first parses a length specifier, using
+the integer-format specifiers from perl's C<pack>:
+
+  # w         variable-length base128 big-endian with continuation bit
+  # w<        variable-length base128 little-endian with continuation bit
+  # Q>  Q<    64-bit big-endian or little-endian
+  # L>  L<    32-bit big-endian or little-endian
+  # S>  S<    16-bit big-endian or little-endian
+  # C          8-bit
+  # N         32-bit big-endian
+  # n         16-bit big-endian
+  # V         32-bit little-endian
+  # v         16-bit little-endian
+
+Then it ensures there are enough remaining bytes in the span, then generates a Span object for
+those bytes.  It repeats this process C<$count> times, or until the end of the span if
+C<$count == -1>.
+
+If I<all> repetitions succeed, it advances L</pos> of the span it was called on and returns the
+list of Spans.  If I<any> fail (due to early end of span or integer overflow) this returns an
+empty list and sets the L</last_error> attribute.  For C<$count == -1>, the final
+length-prefixed string must end at exactly the end of the span, or it is considered a failure.
 
 =method parse_base128be
 
