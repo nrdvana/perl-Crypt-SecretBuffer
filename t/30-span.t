@@ -231,28 +231,33 @@ subtest parse_packed => sub {
       unless Crypt::SecretBuffer::Span->can('parse_packed');
 
    my @tests= (
+      # If perl 5.8's "pack" doesn't support a particular feature, pre-encode in the 3rd column.
       [ 'ccccc',     [ 0, 1, -1, 127, -128 ] ],
       [ 'C4',        [ 0, 1, 128, 255 ] ],
-      [ 'x C x C',   [ 0xAA, 0xBB ], [ 0x11, 0xAA, 0x22, 0xBB ] ],
+      [ 'x C x C',   [ 0xAA, 0xBB ],              "\x11\xAA\x22\xBB" ],
       [ 's[4]',      [ 0, 1, 0x7FFF, -0x8000 ] ],
-      [ 's< s>',     [ 1, 1 ] ],
+      [ 's< s>',     [ 1, 1 ],                    "\1\0\0\1" ],
       [ 'l[4]',      [ 0, 1, 0x7FFFFFFF, -0x80000000 ] ],
-      [ 'l< l>',     [ 1, 1 ] ],
+      [ 'l< l>',     [ 1, 1 ],                    "\1\0\0\0\0\0\0\1" ],
       [ 'v[3]',      [ 0, 1, 0xFFFF ] ],
       [ 'V[3]',      [ 0, 1, 0xFFFFFFFF ] ],
       [ 'n[3]',      [ 0, 1, 0xFFFF ] ],
       [ 'N[3]',      [ 0, 1, 0xFFFFFFFF ] ],
       [ 'w3',        [ 1, 0xFEDCBA98, 0xFFFFFFFF ] ],
-      [ '(C s<)[2]', [ 7, 0x1234, 8, 0x5678 ] ],
-      [ '(((((((C s< s)[2])1))2)))', [ 7, 0x1234, 1, 8, 0x5678, 1, 7, 0x1234, 1, 8, 0x5678, 1 ] ],
+      [ '(C s<)[2]', [ 7, 0x1234, 8, 0x5678 ],    "\7\x34\x12\x08\x78\x56" ],
+      [ '(((((((C v s)[2])>1))2)))',
+                     [ 7, 0x1234, 1, 8, 0x5678, 1, 7, 0x1234, 1, 8, 0x5678, 1 ],
+                     pack('C v n C v n C v n C v n', 7, 0x1234, 1, 8, 0x5678, 1, 7, 0x1234, 1, 8, 0x5678, 1),
+      ],
+      # Q should be supported regardless of whether perl has 64-bit SVs, using automatic BigInts
+      [ 'Q<',        [ "144115188075855873" ],    "\1\0\0\0\0\0\0\2" ],
+      [ 'Q>',        [ "72057594037927938" ],     "\1\0\0\0\0\0\0\2" ],
    );
 
    for my $test (@tests) {
-      my ($fmt, $vals, $packed_bytes)= @$test;
+      my ($fmt, $vals, $packed)= @$test;
       subtest "Format $fmt" => sub {
-         my $packed= defined $packed_bytes
-            ? pack('C*', @$packed_bytes)
-            : pack($fmt, @$vals);
+         $packed= pack($fmt, @$vals) unless defined $packed;
          my $sb= secret($packed);
          my $span= $sb->span;
 
@@ -274,10 +279,6 @@ subtest parse_packed => sub {
          is( $span->last_error, undef, ' parse_packed_to_array left no error' );
       }
    }
-   
-   # Q should be supported regardless of whether perl has 64-bit SVs, using automatic BigInts
-   is( '' . secret("\x01\x00\x00\x00\x00\x00\x00\x02")->span->unpack('Q<'), "144115188075855873", 'Q<' );
-   is( '' . secret("\x01\x00\x00\x00\x00\x00\x00\x02")->span->unpack('Q>'), "72057594037927938", 'Q>' );
    
    like( dies { secret->span->unpack("("x1000) }, qr/too deep/, 'recursion limit' );
 
