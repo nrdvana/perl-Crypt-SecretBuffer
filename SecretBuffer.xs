@@ -25,6 +25,9 @@
 #endif
 
 #include "SecretBuffer_config.h"
+#ifndef HAVE_ENDIAN_H
+   #include "compat_endian.h"
+#endif
 #include "SecretBuffer.h"
 #include "SecretBufferManualLinkage.h"
 
@@ -538,11 +541,11 @@ append(buf, ...)
       }
    PPCODE:
       for (i= 0; i < items-1; i++) {
-         ranges[i].ptr= secret_buffer_SvPVbyte(ST(i+1), &ranges[i].len);
+         ranges[i].ptr= (const U8*) secret_buffer_SvPVbyte(ST(i+1), &ranges[i].len);
          len_sum += ranges[i].len;
       }
       secret_buffer_set_len(buf, from_ofs + len_sum);
-      write_pos= buf->data + from_ofs;
+      write_pos= (U8*)buf->data + from_ofs;
       for (i= 0; i < items-1; i++) {
          memcpy(write_pos, ranges[i].ptr, ranges[i].len);
          write_pos += ranges[i].len;
@@ -1424,7 +1427,7 @@ parse_lenprefixed(self, fmt_sv= NULL, count_sv= NULL)
          if (!count_sv && looks_like_number(fmt_sv))
             count_sv= fmt_sv;
          else {
-            fmt= SvPVbyte(fmt_sv, fmt_len);
+            fmt= (const U8*) SvPVbyte(fmt_sv, fmt_len);
             unpacked_vals= newAV_mortal();
          }
       }

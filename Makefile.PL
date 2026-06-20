@@ -61,12 +61,9 @@ unless ($ctest->feature(HAVE_BOOL => 'bool x= true; return x == false;')) {
    );
 }
 
-unless ($ctest->feature(HAVE_ENDIAN_H
-   => 'uint32_t le= htole32(0x12345678); return le > 0? 0 : 1;',
+$ctest->feature(HAVE_ENDIAN_H => 'uint32_t le= htole32(0x12345678); return le > 0? 0 : 1;',
    { h => 'endian.h' }
-)) {
-   $ctest->append_config_local('#include "compat_endian.h"');
-}
+);
 
 $ctest->header('string.h');
 $ctest->feature(HAVE_EXPLICIT_BZERO => 'char buf[1]= { 1 }; explicit_bzero(buf, 1); return buf[0];');

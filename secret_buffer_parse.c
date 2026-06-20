@@ -1421,8 +1421,7 @@ static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_le
             }
             switch (n_bytes) {
             case 1:
-               val= is_signed < 0? NULL /* skip bytes */
-                  : newSViv(is_signed? (IV)(I8) *p->pos : (IV)(U8) *p->pos);
+               val= newSViv(is_signed? (IV)(I8) *p->pos : (IV)(U8) *p->pos);
                break;
             case 2: {
                   U16 x;
