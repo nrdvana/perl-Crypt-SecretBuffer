@@ -226,6 +226,87 @@ subtest parse => sub {
       'parse nothing from nonempty buffer';
 };
 
+subtest parse_packed => sub {
+   plan skip_all => 'parse_packed is not implemented in this build'
+      unless Crypt::SecretBuffer::Span->can('parse_packed');
+
+   my @tests= (
+      [ 'ccccc',    [ 0, 1, -1, 127, -128 ] ],
+      [ 'C4',       [ 0, 1, 128, 255 ] ],
+      [ 'x C x C',  [ 0xAA, 0xBB ], [ 0x11, 0xAA, 0x22, 0xBB ] ],
+      [ 's[4]',     [ 0, 1, 0x7FFF, -0x8000 ] ],
+      [ 's< s>',    [ 1, 1 ] ],
+      [ 'l[4]',     [ 0, 1, 0x7FFFFFFF, -0x80000000 ] ],
+      [ 'l< l>',    [ 1, 1 ] ],
+      [ 'v[3]',     [ 0, 1, 0xFFFF ] ],
+      [ 'V[3]',     [ 0, 1, 0xFFFFFFFF ] ],
+      [ 'n[3]',     [ 0, 1, 0xFFFF ] ],
+      [ 'N[3]',     [ 0, 1, 0xFFFFFFFF ] ],
+      [ '(C s<)[2]', [ 7, 0x1234, 8, 0x5678 ] ],
+      [ '(((((((C s< s)[2])1))2)))', [ 7, 0x1234, 1, 8, 0x5678, 1, 7, 0x1234, 1, 8, 0x5678, 1 ] ],
+   );
+
+   for my $test (@tests) {
+      my ($fmt, $vals, $packed_bytes)= @$test;
+      subtest "Format $fmt" => sub {
+         my $packed= defined $packed_bytes
+            ? pack('C*', @$packed_bytes)
+            : pack($fmt, @$vals);
+         my $sb= secret($packed);
+         my $span= $sb->span;
+
+         is( [ $span->unpack($fmt) ], $vals, "unpack" );
+         is( $span->pos, 0, ' unpack does not consume bytes' );
+         is( $span->len, length($packed), ' unpack leaves span length unchanged' );
+
+         is( $span->unpack_to_array($fmt), $vals, "unpack_to_array" );
+         is( $span->pos, 0, ' unpack_to_array does not consume bytes' );
+
+         is( [ $span->parse_packed($fmt) ], $vals, "parse_packed" );
+         is( $span->len, 0, ' parse_packed consumed all bytes' );
+         is( $span->last_error, undef, ' parse_packed left no error' );
+
+         $span= $sb->span;
+         is( $span->parse_packed_to_array($fmt), $vals,
+            "parse_packed_to_array" );
+         is( $span->len, 0, ' parse_packed_to_array consumed all bytes' );
+         is( $span->last_error, undef, ' parse_packed_to_array left no error' );
+      }
+   }
+   
+   # Q should be supported regardless of whether perl has 64-bit SVs, using automatic BigInts
+   is( '' . secret("\x01\x00\x00\x00\x00\x00\x00\x02")->span->unpack('Q<'), "144115188075855873", 'Q<' );
+   is( '' . secret("\x01\x00\x00\x00\x00\x00\x00\x02")->span->unpack('Q>'), "72057594037927938", 'Q>' );
+   
+   like( dies { secret->span->unpack("("x1000) }, qr/too deep/, 'recursion limit' );
+
+   subtest 'failed parses do not consume input' => sub {
+      my $span= secret(pack('C', 0x7F))->span;
+      is( [ $span->parse_packed('C C') ], [],
+         'list context parse failure returns empty list' );
+      is( $span->pos, 0, 'pos unchanged after list parse failure' );
+      like( $span->last_error, qr/end of span/i, 'last_error reports end of span' );
+
+      is( $span->parse_packed_to_array('C C'), undef,
+         'arrayref parse failure returns undef' );
+      is( $span->pos, 0, 'pos unchanged after arrayref parse failure' );
+      like( $span->last_error, qr/end of span/i, 'last_error still reports end of span' );
+   };
+
+   subtest 'format errors croak' => sub {
+      my $span= secret(pack('C', 0))->span;
+      ok( !eval { $span->unpack('Z'); 1 }, 'unsupported format dies' );
+      like( $@, qr/unsupported pack notation/, 'unsupported format error message' );
+
+      ok( !eval { $span->unpack('(C'); 1 }, 'unmatched open paren dies' );
+      like( $@, qr/Unmatched '\('/, 'unmatched open paren error message' );
+
+      ok( !eval { $span->unpack('C[abc]'); 1 }, 'invalid bracket repeat dies' );
+      like( $@, qr/missing digits|repeat count|unsupported pack notation/,
+         'invalid repeat error message' );
+   };
+};
+
 subtest trim => sub {
    my $buf= secret(" 1\r\n2\t3\r\n");
    is $buf->span->trim,
@@ -416,8 +497,8 @@ subtest clean_namespace => sub {
    my @public= qw(
       append_to buf buffer can clone cmp consume_bom copy copy_to default_trim_regex encoding
       ends_with last_error len length lim ltrim memcmp new parse parse_asn1_der_length
-      parse_base128be parse_base128le parse_lenprefixed pos rparse rtrim scan set_up_us_the_bom
-      starts_with subspan trim
+      parse_base128be parse_base128le parse_lenprefixed parse_packed parse_packed_to_array pos
+      rparse rtrim scan set_up_us_the_bom starts_with subspan trim unpack unpack_to_array
    );
    is( [ grep /^[a-z]/ && $_ ne 'isa', sort keys %$ns ], \@public )
       or diag explain $ns;

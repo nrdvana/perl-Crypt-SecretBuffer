@@ -2,6 +2,9 @@
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
+#define NEED_av_push_simple
+#define NEED_newAV_mortal
+#define NEED_mPUSHs
 #define NEED_mg_findext
 #define NEED_newSVpvn_share
 #define NEED_SvRX
@@ -9,6 +12,12 @@
 #define NEED_RX_PRELEN
 #include "ppport.h"
 /* these weren't supplied by ppport.h */
+#ifndef newAV_mortal
+   #define newAV_mortal()  ((AV*)sv_2mortal((SV*)newAV()))
+#endif
+#ifndef av_push_simple
+   #define av_push_simple(a,b) av_push(a,b)
+#endif
 #ifndef RX_PRECOMP
    #define RX_PRECOMP(rx)  ((rx)->precomp)
    #define RX_PRELEN(rx)   ((rx)->prelen)
@@ -1454,6 +1463,56 @@ parse_asn1_der_length(self)
       }
    OUTPUT:
       RETVAL
+
+void
+unpack(self, fmt_sv)
+   SV *self
+   SV *fmt_sv
+   ALIAS:
+      unpack_to_array = 1
+      parse_packed = 2
+      parse_packed_to_array = 3
+   INIT:
+      secret_buffer_span *span= secret_buffer_span_from_magic(self, SECRET_BUFFER_MAGIC_OR_DIE);
+      secret_buffer_parse p;
+      STRLEN fmt_len;
+      AV *ret= newAV_mortal(); /* mortal ensures interrupted parse gets cleaned up */
+      const U8* fmt= (U8*) SvPVbyte(fmt_sv, fmt_len);
+      /* treat an invalid span as a bug, rather than returning it to the user as last_error */
+      if (!secret_buffer_parse_init_from_sv(&p, self))
+         croak("%s", p.error);
+   PPCODE:
+      if (!sb_parse_unpack(&p, fmt, fmt_len, ret, 0, 64 /* recursion limit */)) {
+         /* false condition is basically 'EOF', meaning parse failed */
+         span->last_error= p.error;
+         if (ix & 1)
+            XSRETURN_UNDEF;
+         XSRETURN(0);
+      }
+      /* If called as 'parse_packed', consume the bytes of the Span */
+      if (ix & 2) {
+         span->pos= p.pos - (const U8*) p.sbuf->data;
+         span->last_error= NULL;
+      }
+      if (ix & 1) {
+         /* The "to_array" variants need to push an AV ref onto the stack. AV was mortal,
+          * so add a ref.  Use mPUSHs to mortalize the new ref.
+          * (unless RC_STACK, then the stack becomes the owner of the ref) */
+         mPUSHs(newRV_inc((SV*)ret));
+      } else {
+         /* The return-a-list variants need to move elements from array to stack.
+          * On non-RC_STACK, the refs need to be mortal.  SV pointers owned by a mortal AV
+          * are equivalent to mortal SV pointers not owned by anything.
+          * On RC_STACK, the refs needs to be owned by the stack.  PUSHs will add a refcnt,
+          * and the mortal AV will decrement it later.  Could be a tiny bit more efficient
+          * to move pointers from AV to stack and set AV length to zero, but that would be
+          * a lot of code for a micro-optimization of a non-default compile setting. */
+         int i, n= av_len(ret)+1;
+         SV **ava= AvARRAY(ret);
+         EXTEND(SP, n);
+         for (i= 0; i < n; i++)
+            PUSHs(ava[i]);
+      }
 
 void
 copy(self, ...)

@@ -13,6 +13,8 @@ static int sb_parse_prev_codepoint(secret_buffer_parse *parse);
 static int sb_parse_next_codepoint(secret_buffer_parse *parse);
 /* encode codepoint into buffer range described by 'parse' */
 static bool sb_parse_encode_codepoint(secret_buffer_parse_rw *parse, int codepoint);
+/* partial implementation of perl's "unpack", mainly the integer types */
+static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_len, AV *dst, int default_endian, int recursion_lim);
 
 static bool sb_parse_match_charset_bytes(secret_buffer_parse *parse, const secret_buffer_charset *cset, int flags);
 static bool sb_parse_match_charset_codepoints(secret_buffer_parse *parse, const secret_buffer_charset *cset, int flags);
@@ -130,7 +132,7 @@ bool secret_buffer_match(secret_buffer_parse *parse, SV *pattern, int flags) {
    }
    /* Remove edge case of zero-length subject (never matches) */
    if (parse->pos >= parse->lim) {
-      return (flags & SECRET_BUFFER_MATCH_NEGATE);
+      return !!(flags & SECRET_BUFFER_MATCH_NEGATE);
    }
 
    /* Since unicode iteration of the pattern is a hassle and might happen lots of times,
@@ -1285,3 +1287,190 @@ static bool sb_parse_encode_codepoint(secret_buffer_parse_rw *dst, int codepoint
 #include "secret_buffer_parse_match_str.c"
 #undef SB_PARSE_MATCH_STR_FN
 #undef SB_PATTERN_EL_TYPE
+
+/* Perform a subset of perl's "unpack" on a span of a secret buffer.
+ * Errors or unsupported syntax in `fmt` throw exceptions.
+ * Errors in the data being parsed set p->error and return false.
+ * `dst` (the destination AV) must be suitable for `av_push_simple` (non-magical).
+ * `default_endian` is 0 for host order, -1 for little-endian, and 1 for big-endian.
+ * `recursion_lim` should be set to an initial value like 64, that prevents excessive
+ *    recursion when processing () sub-expressions.
+ */
+static bool sb_parse_unpack(secret_buffer_parse *p, const U8 *fmt, size_t fmt_len, AV *dst, int default_endian, int recursion_lim) {
+   dTHX; /* lots of newSV below, optimize by having in scope */
+   const U8 *fmt_lim= fmt + fmt_len;
+   /* iterate across the format string */
+   while (fmt < fmt_lim) {
+      int endian= default_endian, n_bytes= 0;
+      bool is_signed= false;
+      const U8 *sub_fmt= NULL;
+      size_t sub_fmt_len= 0, rep_count= 1;
+      U8 code= *fmt++;
+
+      switch (code) {
+      case ' ': continue;
+      case 'x': n_bytes= 1; is_signed= -1; break;
+      case 'c': n_bytes= 1; is_signed= 1; break;
+      case 'C': n_bytes= 1; break;
+      case 's': n_bytes= 2; is_signed= 1; break;
+      case 'S': n_bytes= 2; break;
+      case 'l': n_bytes= 4; is_signed= 1; break;
+      case 'L': n_bytes= 4; break;
+      case 'q': n_bytes= 8; is_signed= 1; break;
+      case 'Q': n_bytes= 8; break;
+      case 'v': n_bytes= 2; endian= -1; break;
+      case 'V': n_bytes= 4; endian= -1; break;
+      case 'n': n_bytes= 2; endian=  1; break;
+      case 'N': n_bytes= 4; endian=  1; break;
+      case '(': {
+            /* find the end of the parenthetical expression */
+            int depth= 1;
+            sub_fmt= fmt;
+            if (depth > recursion_lim)
+               croak("Parenthetical expressions nested too deeply");
+            while (fmt < fmt_lim) {
+               if (*fmt == ')') {
+                  if (!--depth) break;
+               }
+               else if (*fmt == '(') {
+                  ++depth;
+                  if (depth > recursion_lim)
+                     croak("Parenthetical expressions nested too deeply");
+               }
+               fmt++;
+            }
+            if (depth != 0)
+               croak("Unmatched '(' in pack format");
+            sub_fmt_len= fmt - sub_fmt;
+            fmt++;
+         }
+         break;
+      case ')': croak("Unmatched ')' in pack format");
+      default:
+         croak("unsupported pack notation at '%c'", fmt[-1]);
+      }
+      /* check for endian modifier */
+      if (fmt < fmt_lim && (*fmt == '>' || *fmt == '<')) {
+         endian= (*fmt == '>')? 1 : -1;
+         fmt++;
+      }
+      /* check for repetition count */
+      if (fmt < fmt_lim && (*fmt == '[' || isdigit(*fmt))) {
+         char *end= NULL;
+         bool bracketed= *fmt == '[';
+         const char *digits= (const char*)(bracketed? fmt + 1 : fmt);
+         long rep_long;
+         errno= 0;
+         rep_long= strtol(digits, &end, 10);
+         if (end > digits) {
+            if (rep_long <= 0)
+               croak("repeat count must be positive");
+            /* make sure insane rep counts don't overflow things */
+            if (errno == ERANGE || (unsigned long)rep_long > (n_bytes? (size_t)(SIZE_MAX / n_bytes) : SIZE_MAX))
+               croak("repeat count overflows size_t");
+            rep_count= (size_t) rep_long;
+            if (bracketed) {
+               if (*end != ']')
+                  croak("expected ']'");
+               fmt= (const U8*)(end + 1);
+            } else {
+               fmt= (const U8*) end;
+            }
+         } else if (bracketed) {
+            /* bracketed expression must contain a repetition count */
+            croak("missing digits after '['");
+         }
+      }
+      if (sub_fmt) {
+         while (rep_count-- > 0) {
+            if (!sb_parse_unpack(p, sub_fmt, sub_fmt_len, dst, endian, recursion_lim-1))
+               return false;
+         }
+      }
+      else if (code == 'x') { /* skip bytes */
+         size_t skip_n= (size_t)n_bytes * (size_t)rep_count;
+         if (p->lim - p->pos < skip_n) {
+            p->error= "End of span";
+            return false;
+         }
+         p->pos += skip_n;
+      }
+      else {
+         while (rep_count-- > 0) {
+            SV *val= NULL;
+            if (p->lim - p->pos < (size_t)n_bytes) {
+               p->error= "End of span";
+               return false;
+            }
+            switch (n_bytes) {
+            case 1:
+               val= is_signed < 0? NULL /* skip bytes */
+                  : newSViv(is_signed? (IV)(I8) *p->pos : (IV)(U8) *p->pos);
+               break;
+            case 2: {
+                  U16 x;
+                  memcpy((void*)&x, p->pos, sizeof(x));
+                  if (endian < 0) x= le16toh(x);
+                  else if (endian > 0) x= be16toh(x);
+                  val= newSViv(is_signed? (IV)(I16) x : (IV) x);
+               }
+               break;
+            case 4: {
+                  U32 x;
+                  memcpy((void*)&x, p->pos, sizeof(x));
+                  if (endian < 0) x= le32toh(x);
+                  else if (endian > 0) x= be32toh(x);
+                  val= is_signed? newSViv((I32)x) : newSVuv(x);
+               }
+               break;
+            case 8: {
+                  uint64_t x;
+                  memcpy((void*)&x, p->pos, sizeof(x));
+                  if (endian < 0) x= le64toh(x);
+                  else if (endian > 0) x= be64toh(x);
+#if UVSIZE >= 8
+                  val= is_signed? newSViv((int64_t)x) : newSVuv(x);
+#else
+                  { /* automatically use BigInt instead of croaking if Q isn't supported by perl */
+                     dSP;
+                     SV *hex;
+                     bool negative= false;
+                     if (x >> 63) {
+                        x= ~x + 1; /* twos complement */
+                        negative= true;
+                     }
+                     hex= sv_2mortal(Perl_newSVpvf(aTHX_,
+                        negative? "-0x%08lX%08lX" : "0x%08lX%08lX",
+                        (unsigned long)((x >> 32) & 0xFFFFFFFFul),
+                        (unsigned long)(x & 0xFFFFFFFFul)));
+                     load_module(PERL_LOADMOD_NOIMPORT, newSVpvs("Math::BigInt"), NULL, NULL);
+                     ENTER;
+                     SAVETMPS;
+
+                     PUSHMARK(SP);
+                     EXTEND(SP, 2);
+                     PUSHs(sv_2mortal(newSVpvs("Math::BigInt")));
+                     PUSHs(hex);
+                     PUTBACK;
+                     count= call_method("new", G_SCALAR);
+                     SPAGAIN;
+                     if (count != 1)
+                        croak("Math::BigInt->new did not return a scalar");
+                     val= SvREFCNT_inc(POPs);
+                     PUTBACK;
+                     FREETMPS;
+                     LEAVE;
+                  }
+#endif
+               }
+               break;
+            default:
+               croak("BUG");
+            }
+            p->pos += n_bytes;
+            if (val) av_push_simple(dst, val);
+         }
+      }
+   }
+   return true;
+}

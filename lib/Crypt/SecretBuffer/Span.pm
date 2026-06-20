@@ -206,6 +206,41 @@ by Google Protocol Buffers.  On failure, returns C<undef> and sets L</last_error
 Parse the variable-length integer used by ASN.1 DER encoding for the length of an element.
 On failure, returns C<undef> and sets L</last_error>.
 
+=method unpack
+
+Variants:
+
+=over
+
+=item unpack_to_array
+
+Returns an arrayref.
+
+=item parse_packed
+
+Advances L</pos>.
+
+=item parse_packed_to_array
+
+Advances L</pos> and returns an arrayref.
+
+=back
+
+  my (@nonsecret_values)= $span->unpack('VvvV[6]');  # perl's pack() notation
+  my (@nonsecret_values)= $span->parse_packed($foramt);
+  my $arrayref= $span->unpack_to_array($format);
+  my $arrayref= $span->parse_packed_to_array($format);
+
+This is like perl's own C<unpack>, although it only supports the numeric formats for 8, 16, 32,
+and 64 bit values, and the endian indicators.  The values are assumed to be non-secret, because
+there's really no useful way to unpack secret integers and still be able to use them in a perl
+script.  This is intended for decoding the framing of secret parts of a message.
+
+This returns false if there are not enough byytes in the span to satisfy the unpack.
+It dies if the C<$format> string is invalid or unsupported.
+
+C<unpack> does not advance the L</pos> of the span.  The C<parse_packed> variants do.
+
 =method consume_bom
 
   # On a buffer which may begin with a BOM:
