@@ -50,6 +50,7 @@ if ($^O eq 'MSWin32') {
 }
 
 $ctest->header('stdint.h');
+$ctest->header('errno.h');
 
 $ctest->header('stdbool.h');
 unless ($ctest->feature(HAVE_BOOL => 'bool x= true; return x == false;')) {
@@ -58,6 +59,13 @@ unless ($ctest->feature(HAVE_BOOL => 'bool x= true; return x == false;')) {
       '#define true 1',
       '#define false 0',
    );
+}
+
+unless ($ctest->feature(HAVE_ENDIAN_H
+   => 'uint32_t le= htole32(0x12345678); return le > 0? 0 : 1;',
+   { h => 'endian.h' }
+)) {
+   $ctest->append_config_local('#include "compat_endian.h"');
 }
 
 $ctest->header('string.h');
@@ -127,7 +135,7 @@ my %WriteMakefileArgs = (
     "Test2::V0" => 0,
     "lib" => 0
   },
-  "VERSION" => "0.024",
+  "VERSION" => "0.025",
   "test" => {
     "TESTS" => "t/*.t"
   }
