@@ -1,13 +1,14 @@
 /* compat_endian.h - substitute for endian.h on systems that lack it
  *
  * Provides:
- *   compat_htole16, compat_le16toh, compat_htobe16, compat_be16toh
- *   compat_htole32, compat_le32toh, compat_htobe32, compat_be32toh
- *   compat_htole64, compat_le64toh, compat_htobe64, compat_be64toh
+ *   compat_endian_htole16, compat_endian_le16toh, compat_endian_htobe16, compat_endian_be16toh
+ *   compat_endian_htole32, compat_endian_le32toh, compat_endian_htobe32, compat_endian_be32toh
+ *   compat_endian_htole64, compat_endian_le64toh, compat_endian_htobe64, compat_endian_be64toh
  *
- * Also, if the *unprefixed* names are missing, defines them to the compat_ versions:
- *   htole32, htole64, le32toh, le64toh, htobe32, be32toh
- *
+ * Then, if the *unprefixed* names are missing, defines them to the compat_ versions:
+ *   htole16 le16toh htobe16 be16toh
+ *   htole32 le32toh htobe32 be32toh
+ *   htole64 le64toh htobe64 be64toh
  */
 
 #ifndef COMPAT_ENDIAN_H
@@ -17,13 +18,13 @@
 
 /* ---- pure-C byteswap helpers (no intrinsics / builtins required) ---- */
 
-PERL_STATIC_INLINE U16 compat_bswap32_u(U16 x)
+PERL_STATIC_INLINE uint16_t compat_endian_bswap16_u(uint16_t x)
 {
     return ((x & 0x00FFu) <<  8) |
            ((x & 0xFF00u) >>  8);
 }
 
-PERL_STATIC_INLINE U32 compat_bswap32_u(U32 x)
+PERL_STATIC_INLINE uint32_t compat_endian_bswap32_u(uint32_t x)
 {
     return ((x & 0x000000FFu) << 24) |
            ((x & 0x0000FF00u) <<  8) |
@@ -31,7 +32,7 @@ PERL_STATIC_INLINE U32 compat_bswap32_u(U32 x)
            ((x & 0xFF000000u) >> 24);
 }
 
-PERL_STATIC_INLINE U64 compat_bswap64_u(U64 x)
+PERL_STATIC_INLINE uint64_t compat_endian_bswap64_u(uint64_t x)
 {
     return ((x & 0x00000000000000FFull) << 56) |
            ((x & 0x000000000000FF00ull) << 40) |
@@ -53,20 +54,20 @@ PERL_STATIC_INLINE U64 compat_bswap64_u(U64 x)
 
 PERL_STATIC_INLINE int compat_endian_is_le(void) { return 1; }
 
-PERL_STATIC_INLINE U16 compat_endian_htole16(U16 x) { return x; }
-PERL_STATIC_INLINE U16 compat_endian_htobe16(U16 x) { return compat_bswap16_u(x); }
-PERL_STATIC_INLINE U16 compat_endian_le16toh(U16 x) { return x; }
-PERL_STATIC_INLINE U16 compat_endian_be16toh(U16 x) { return compat_bswap16_u(x); }
+PERL_STATIC_INLINE uint16_t compat_endian_htole16(uint16_t x) { return x; }
+PERL_STATIC_INLINE uint16_t compat_endian_htobe16(uint16_t x) { return compat_endian_bswap16_u(x); }
+PERL_STATIC_INLINE uint16_t compat_endian_le16toh(uint16_t x) { return x; }
+PERL_STATIC_INLINE uint16_t compat_endian_be16toh(uint16_t x) { return compat_endian_bswap16_u(x); }
 
-PERL_STATIC_INLINE U32 compat_endian_htole32(U23 x) { return x; }
-PERL_STATIC_INLINE U32 compat_endian_htobe32(U23 x) { return compat_bswap32_u(x); }
-PERL_STATIC_INLINE U32 compat_endian_le32toh(U23 x) { return x; }
-PERL_STATIC_INLINE U32 compat_endian_be32toh(U23 x) { return compat_bswap32_u(x); }
+PERL_STATIC_INLINE uint32_t compat_endian_htole32(uint32_t x) { return x; }
+PERL_STATIC_INLINE uint32_t compat_endian_htobe32(uint32_t x) { return compat_endian_bswap32_u(x); }
+PERL_STATIC_INLINE uint32_t compat_endian_le32toh(uint32_t x) { return x; }
+PERL_STATIC_INLINE uint32_t compat_endian_be32toh(uint32_t x) { return compat_endian_bswap32_u(x); }
 
-PERL_STATIC_INLINE U64 compat_endian_htole64(U64 x) { return x; }
-PERL_STATIC_INLINE U64 compat_endian_htobe64(U64 x) { return compat_bswap64_u(x); }
-PERL_STATIC_INLINE U64 compat_endian_le64toh(U64 x) { return x; }
-PERL_STATIC_INLINE U64 compat_endian_be64toh(U64 x) { return compat_bswap64_u(x); }
+PERL_STATIC_INLINE uint64_t compat_endian_htole64(uint64_t x) { return x; }
+PERL_STATIC_INLINE uint64_t compat_endian_htobe64(uint64_t x) { return compat_endian_bswap64_u(x); }
+PERL_STATIC_INLINE uint64_t compat_endian_le64toh(uint64_t x) { return x; }
+PERL_STATIC_INLINE uint64_t compat_endian_be64toh(uint64_t x) { return compat_endian_bswap64_u(x); }
 
 #elif defined(__BIG_ENDIAN__) || \
       (defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)) || \
@@ -74,20 +75,20 @@ PERL_STATIC_INLINE U64 compat_endian_be64toh(U64 x) { return compat_bswap64_u(x)
 
 PERL_STATIC_INLINE int compat_endian_is_le(void) { return 0; }
 
-PERL_STATIC_INLINE U16 compat_endian_htole16(U16 x) { return compat_bswap16_u(x); }
-PERL_STATIC_INLINE U16 compat_endian_htobe16(U16 x) { return x; }
-PERL_STATIC_INLINE U16 compat_endian_le16toh(U16 x) { return compat_bswap16_u(x); }
-PERL_STATIC_INLINE U16 compat_endian_be16toh(U16 x) { return x; }
+PERL_STATIC_INLINE uint16_t compat_endian_htole16(uint16_t x) { return compat_endian_bswap16_u(x); }
+PERL_STATIC_INLINE uint16_t compat_endian_htobe16(uint16_t x) { return x; }
+PERL_STATIC_INLINE uint16_t compat_endian_le16toh(uint16_t x) { return compat_endian_bswap16_u(x); }
+PERL_STATIC_INLINE uint16_t compat_endian_be16toh(uint16_t x) { return x; }
 
-PERL_STATIC_INLINE U32 compat_endian_htole32(U32 x) { return compat_bswap32_u(x); }
-PERL_STATIC_INLINE U32 compat_endian_htobe32(U32 x) { return x; }
-PERL_STATIC_INLINE U32 compat_endian_le32toh(U32 x) { return compat_bswap32_u(x); }
-PERL_STATIC_INLINE U32 compat_endian_be32toh(U32 x) { return x; }
+PERL_STATIC_INLINE uint32_t compat_endian_htole32(uint32_t x) { return compat_endian_bswap32_u(x); }
+PERL_STATIC_INLINE uint32_t compat_endian_htobe32(uint32_t x) { return x; }
+PERL_STATIC_INLINE uint32_t compat_endian_le32toh(uint32_t x) { return compat_endian_bswap32_u(x); }
+PERL_STATIC_INLINE uint32_t compat_endian_be32toh(uint32_t x) { return x; }
 
-PERL_STATIC_INLINE U64 compat_endian_htole64(U64 x) { return compat_bswap64_u(x); }
-PERL_STATIC_INLINE U64 compat_endian_htobe64(U64 x) { return x; }
-PERL_STATIC_INLINE U64 compat_endian_le64toh(U64 x) { return compat_bswap64_u(x); }
-PERL_STATIC_INLINE U64 compat_endian_be64toh(U64 x) { return x; }
+PERL_STATIC_INLINE uint64_t compat_endian_htole64(uint64_t x) { return compat_endian_bswap64_u(x); }
+PERL_STATIC_INLINE uint64_t compat_endian_htobe64(uint64_t x) { return x; }
+PERL_STATIC_INLINE uint64_t compat_endian_le64toh(uint64_t x) { return compat_endian_bswap64_u(x); }
+PERL_STATIC_INLINE uint64_t compat_endian_be64toh(uint64_t x) { return x; }
 
 #else
 
@@ -96,20 +97,20 @@ PERL_STATIC_INLINE int compat_endian_is_le(void) {
    return *((const uint8_t *)&one) == 1;
 }
 
-PERL_STATIC_INLINE U16 compat_endian_htole16(U16 x) { return compat_endian_is_le()? x : compat_bswap16_u(x); }
-PERL_STATIC_INLINE U16 compat_endian_htobe16(U16 x) { return compat_endian_is_le()? compat_bswap16_u(x) : x; }
-PERL_STATIC_INLINE U16 compat_endian_le16toh(U16 x) { return compat_endian_is_le()? x : compat_bswap16_u(x); }
-PERL_STATIC_INLINE U16 compat_endian_be16toh(U16 x) { return compat_endian_is_le()? compat_bswap16_u(x) : x; }
+PERL_STATIC_INLINE uint16_t compat_endian_htole16(uint16_t x) { return compat_endian_is_le()? x : compat_endian_bswap16_u(x); }
+PERL_STATIC_INLINE uint16_t compat_endian_htobe16(uint16_t x) { return compat_endian_is_le()? compat_endian_bswap16_u(x) : x; }
+PERL_STATIC_INLINE uint16_t compat_endian_le16toh(uint16_t x) { return compat_endian_is_le()? x : compat_endian_bswap16_u(x); }
+PERL_STATIC_INLINE uint16_t compat_endian_be16toh(uint16_t x) { return compat_endian_is_le()? compat_endian_bswap16_u(x) : x; }
 
-PERL_STATIC_INLINE U32 compat_endian_htole32(U32 x) { return compat_endian_is_le()? x : compat_bswap32_u(x); }
-PERL_STATIC_INLINE U32 compat_endian_htobe32(U32 x) { return compat_endian_is_le()? compat_bswap32_u(x) : x; }
-PERL_STATIC_INLINE U32 compat_endian_le32toh(U32 x) { return compat_endian_is_le()? x : compat_bswap32_u(x); }
-PERL_STATIC_INLINE U32 compat_endian_be32toh(U32 x) { return compat_endian_is_le()? compat_bswap32_u(x) : x; }
+PERL_STATIC_INLINE uint32_t compat_endian_htole32(uint32_t x) { return compat_endian_is_le()? x : compat_endian_bswap32_u(x); }
+PERL_STATIC_INLINE uint32_t compat_endian_htobe32(uint32_t x) { return compat_endian_is_le()? compat_endian_bswap32_u(x) : x; }
+PERL_STATIC_INLINE uint32_t compat_endian_le32toh(uint32_t x) { return compat_endian_is_le()? x : compat_endian_bswap32_u(x); }
+PERL_STATIC_INLINE uint32_t compat_endian_be32toh(uint32_t x) { return compat_endian_is_le()? compat_endian_bswap32_u(x) : x; }
 
-PERL_STATIC_INLINE U64 compat_endian_htole64(U64 x) { return compat_endian_is_le()? x : compat_bswap64_u(x); }
-PERL_STATIC_INLINE U64 compat_endian_htobe64(U64 x) { return compat_endian_is_le()? compat_bswap64_u(x) : x; }
-PERL_STATIC_INLINE U64 compat_endian_le64toh(U64 x) { return compat_endian_is_le()? x : compat_bswap64_u(x); }
-PERL_STATIC_INLINE U64 compat_endian_be64toh(U64 x) { return compat_endian_is_le()? compat_bswap64_u(x) : x; }
+PERL_STATIC_INLINE uint64_t compat_endian_htole64(uint64_t x) { return compat_endian_is_le()? x : compat_endian_bswap64_u(x); }
+PERL_STATIC_INLINE uint64_t compat_endian_htobe64(uint64_t x) { return compat_endian_is_le()? compat_endian_bswap64_u(x) : x; }
+PERL_STATIC_INLINE uint64_t compat_endian_le64toh(uint64_t x) { return compat_endian_is_le()? x : compat_endian_bswap64_u(x); }
+PERL_STATIC_INLINE uint64_t compat_endian_be64toh(uint64_t x) { return compat_endian_is_le()? compat_endian_bswap64_u(x) : x; }
 
 #endif
 
